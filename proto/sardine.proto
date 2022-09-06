@@ -1,0 +1,110 @@
+syntax = "proto3";
+
+package Sardine;
+
+option go_package = "github.com/cestlascorpion/Sardine;sardine";
+
+service assign {
+  // 注册业务tag 漫长的等待～
+  rpc RegSection(RegSectionReq) returns (RegSectionResp) {}
+  // 注册业务tag 漫长的等待～
+  rpc UnRegSection(UnRegSectionReq) returns (UnRegSectionResp) {}
+}
+
+service alloc {
+  // 生成单个id指定tag的Seq
+  rpc GenUserSeq(GenUserSeqReq) returns (GenUserSeqResp) {}
+  // 获取单个id指定tag的Seq
+  rpc GetUserSeq(GetUserSeqReq) returns (GetUserSeqResp) {}
+}
+
+service proxy {
+  // 生成单个id指定tag的Seq    单调递增但不保证连续性
+  rpc GenUserSeq(GenUserSeqReq) returns (GenUserSeqResp) {}
+  // 获取单个id指定tag的Seq    小概率获取到比实际Seq大的Seq（服务重启，缓存失效）
+  rpc GetUserSeq(GetUserSeqReq) returns (GetUserSeqResp) {}
+
+  // 生成单个id多个tag的Seq    单调递增但不保证连续性
+  rpc GenUserMultiSeq(GenUserMultiSeqReq) returns (GenUserMultiSeqResp) {}
+  // 获取单个id多个tag的Seq    小概率获取到比实际Seq大的Seq（服务重启，缓存失效）
+  rpc GetUserMultiSeq(GetUserMultiSeqReq) returns (GetUserMultiSeqResp) {}
+
+  // 生成多个id指定tag的Seq    单调递增但不保证连续性
+  rpc BatchGenUserSeq(BatchGenUserSeqReq) returns (BatchGenUserSeqResp) {}
+  // 获取多个id指定tag的Seq    小概率获取到比实际Seq大的Seq（服务重启，缓存失效）
+  rpc BatchGetUserSeq(BatchGetUserSeqReq) returns (BatchGetUserSeqResp) {}
+}
+
+message RegSectionReq {
+  string tag = 1; // 默认支持 int32(0) - int32(math.MaxInt32) 范围
+  bool async = 2;
+}
+
+message RegSectionResp {
+  // nothing
+}
+
+message UnRegSectionReq {
+  string tag = 1; // 默认支持 int32(0) - int32(math.MaxInt32) 范围
+  bool async = 2;
+}
+
+message UnRegSectionResp {
+  // nothing
+}
+
+message GenUserSeqReq {
+  uint32 id = 1;
+  string tag = 2;
+}
+
+message GenUserSeqResp {
+  int64 id = 1;
+}
+
+message GetUserSeqReq {
+  uint32 id = 1;
+  string tag = 2;
+}
+
+message GetUserSeqResp {
+  int64 id = 1;
+}
+
+message GenUserMultiSeqReq {
+  uint32 id = 1;
+  repeated string tagList = 2;
+  bool async = 3;
+}
+
+message GenUserMultiSeqResp {
+  map<string, int64>SeqList = 1;
+}
+
+message GetUserMultiSeqReq {
+  uint32 id = 1;
+  repeated string tagList = 2;
+}
+
+message GetUserMultiSeqResp {
+  map<string, int64>SeqList = 1;
+}
+
+message BatchGenUserSeqReq {
+  repeated uint32 idList = 1;
+  string tag = 2;
+  bool async = 3;
+}
+
+message BatchGenUserSeqResp {
+  map<uint32, int64>SeqList = 1;
+}
+
+message BatchGetUserSeqReq {
+  repeated uint32 idList = 1;
+  string tag = 2;
+}
+
+message BatchGetUserSeqResp {
+  map<uint32, int64>SeqList = 1;
+}

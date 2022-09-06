@@ -1,0 +1,29 @@
+server:
+  addr: :8080
+  name: sardine
+  log_level: debug
+  table: test
+storage:
+  type: 1
+  redis:
+    network: tcp
+    addr: 127.0.0.1:6379
+    database: 0
+    key_prefix: seq
+  mysql:
+    host: 127.0.0.1
+    port: 3306
+    protocol: tcp
+    database: leaf
+    username: hans
+    password: 123456
+    charset: utf8
+    ping_interval: 60
+    max_idle_conn: 100
+    max_open_conn: 200
+  etcd:
+    endpoints: 127.0.0.1:2379
+    identity: 127.0.0.1:8080
+reporter:
+  webhook:
+  secret:
