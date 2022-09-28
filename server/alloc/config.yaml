@@ -23,7 +23,11 @@ storage:
     max_open_conn: 200
   etcd:
     endpoints: 127.0.0.1:2379
-    identity: 127.0.0.1:8100
+    identity: 127.0.0.1
+    election_ttl: 600
+cronjob:
+  check_pending: "*/10 * * * *"
+  check_balance: "*/2 * * * *"
 reporter:
   webhook:
   secret:

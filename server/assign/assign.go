@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"flag"
+	"fmt"
 	"net"
 	"os"
 	"os/signal"
@@ -16,11 +18,24 @@ import (
 	"google.golang.org/grpc/reflection"
 )
 
+var (
+	port int
+)
+
+func init() {
+	flag.IntVar(&port, "port", 0, "listen port")
+}
+
 func main() {
 	conf, err := utils.NewConfig(context.Background(), "./config.yaml")
 	if err != nil {
 		log.Fatalf("new config failed err %+v", err)
 		return
+	}
+
+	flag.Parse()
+	if port != 0 {
+		conf.Server.Addr = fmt.Sprintf(":%d", port)
 	}
 
 	lg, err := log.ParseLevel(conf.Server.LogLevel)

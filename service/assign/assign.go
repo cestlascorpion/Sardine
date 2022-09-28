@@ -21,15 +21,18 @@ import (
 // assign 'pending' section to a certain alloc and put routing rule(with 'pending' value). delete --prefix
 // routing key in case alloc crashed. watch routing rule to manage idle section to re-assign.
 type Assign struct {
-	table       string
-	name        string
-	client      *v3.Client
-	alloc       *allocTable
-	watchCancel []context.CancelFunc
-	master      *atomic.Bool
-	cronjob     *cron.Cron
-	snapshots   []map[string][]string
-	msgBot      *utils.LarkBot
+	table        string
+	name         string
+	client       *v3.Client
+	alloc        *allocTable
+	watchCancel  []context.CancelFunc
+	electionTTL  int
+	master       *atomic.Bool
+	checkPending string
+	checkBalance string
+	cronjob      *cron.Cron
+	snapshots    []map[string][]string
+	msgBot       *utils.LarkBot
 }
 
 func NewAssign(ctx context.Context, conf *utils.Config) (*Assign, error) {
@@ -56,10 +59,13 @@ func NewAssign(ctx context.Context, conf *utils.Config) (*Assign, error) {
 		alloc: &allocTable{
 			table: make(map[string]*status),
 		},
-		master:    atomic.NewBool(false),
-		cronjob:   cron.New(),
-		snapshots: make([]map[string][]string, 3),
-		msgBot:    bot,
+		electionTTL:  conf.Storage.Etcd.ElectionTTL,
+		master:       atomic.NewBool(false),
+		checkPending: conf.Cronjob.CheckPending,
+		checkBalance: conf.Cronjob.CheckBalance,
+		cronjob:      cron.New(),
+		snapshots:    make([]map[string][]string, 3),
+		msgBot:       bot,
 	}
 
 	assign.watchAlloc(ctx)
@@ -133,7 +139,6 @@ const (
 	allocPrefixFormat   = "/segment/%s/alloc"
 	sectionPrefixFormat = "/segment/%s/section"
 	routingPrefixFormat = "/segment/%s/routing"
-	assignMasterTTL     = 600
 	assignMasterFormat  = "/segment/%s/assign/master"
 )
 
@@ -404,7 +409,7 @@ func (a *Assign) batchAssign(ctx context.Context, sectList []string) (map[string
 }
 
 func (a *Assign) election(ctx context.Context) {
-	ttl := assignMasterTTL
+	ttl := a.electionTTL
 	key := fmt.Sprintf(assignMasterFormat, a.table)
 
 	go func() {
@@ -436,7 +441,7 @@ func (a *Assign) election(ctx context.Context) {
 }
 
 func (a *Assign) runCronjob(ctx context.Context) error {
-	_, err := a.cronjob.AddFunc("/15 * * * *", func() {
+	_, err := a.cronjob.AddFunc(a.checkPending, func() {
 		if !a.master.Load() {
 			return
 		}
@@ -457,7 +462,7 @@ func (a *Assign) runCronjob(ctx context.Context) error {
 		return err
 	}
 
-	_, err = a.cronjob.AddFunc("*/5 * * * *", func() {
+	_, err = a.cronjob.AddFunc(a.checkBalance, func() {
 		if !a.master.Load() {
 			return
 		}

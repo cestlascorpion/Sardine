@@ -12,6 +12,7 @@ import (
 type Config struct {
 	Server   *ServerConfig   `json:"server,omitempty" yaml:"server"`
 	Storage  *StorageConfig  `json:"storage,omitempty" yaml:"storage"`
+	Cronjob  *CronjobConfig  `json:"cronjob,omitempty" yaml:"cronjob"`
 	Reporter *ReporterConfig `json:"reporter,omitempty" yaml:"reporter"`
 }
 
@@ -20,11 +21,15 @@ func (c *Config) Check() bool {
 		log.Errorf("nil server/storage config")
 		return false
 	}
+	if c.Cronjob == nil {
+		log.Errorf("nil cronjob config")
+		return false
+	}
 	if c.Reporter == nil {
 		log.Errorf("nil reporter config")
 		return false
 	}
-	return c.Server.check() && c.Storage.check() && c.Reporter.check()
+	return c.Server.check() && c.Storage.check() && c.Cronjob.check() && c.Reporter.check()
 }
 
 type ServerConfig struct {
@@ -140,8 +145,9 @@ func (m *MySQLConfig) check() bool {
 }
 
 type EtcdConfig struct {
-	Endpoints string `json:"endpoints,omitempty" yaml:"endpoints"`
-	Identity  string `json:"identity,omitempty" yaml:"identity"`
+	Endpoints   string `json:"endpoints,omitempty" yaml:"endpoints"`
+	Identity    string `json:"identity,omitempty" yaml:"identity"`
+	ElectionTTL int    `json:"election_ttl,omitempty" yaml:"election_ttl"`
 }
 
 func (e *EtcdConfig) check() bool {
@@ -156,6 +162,24 @@ func (e *EtcdConfig) check() bool {
 			return false
 		}
 	}
+	if e.ElectionTTL == 0 {
+		e.ElectionTTL = electionMasterTTL
+	}
+	return true
+}
+
+type CronjobConfig struct {
+	CheckPending string `json:"check_pending,omitempty" yaml:"check_pending"`
+	CheckBalance string `json:"check_balance,omitempty" yaml:"check_balance"`
+}
+
+func (c *CronjobConfig) check() bool {
+	if len(c.CheckPending) == 0 {
+		c.CheckPending = checkPendingCron
+	}
+	if len(c.CheckBalance) == 0 {
+		c.CheckBalance = checkBalanceCron
+	}
 	return true
 }
 
@@ -166,8 +190,7 @@ type ReporterConfig struct {
 
 func (r *ReporterConfig) check() bool {
 	if len(r.Webhook) == 0 || len(r.Secret) == 0 {
-		log.Errorf("invalid webhook or secret")
-		return false
+		log.Warnf("invalid webhook or secret")
 	}
 	return true
 }
@@ -200,9 +223,14 @@ func NewTestConfig() *Config {
 				MaxOpenConn:  200,
 			},
 			Etcd: &EtcdConfig{
-				Endpoints: "127.0.0.1:2379",
-				Identity:  "192.168.0.1",
+				Endpoints:   "127.0.0.1:2379",
+				Identity:    "127.0.0.1",
+				ElectionTTL: electionMasterTTL,
 			},
+		},
+		Cronjob: &CronjobConfig{
+			CheckPending: checkPendingCron,
+			CheckBalance: checkBalanceCron,
 		},
 		Reporter: &ReporterConfig{
 			Webhook: "",
@@ -232,7 +260,7 @@ func (c *Config) GetTable() string {
 }
 
 func (c *Config) GetEtcdId() string {
-	return c.Storage.Etcd.Identity
+	return fmt.Sprintf("%s%s", c.Storage.Etcd.Identity, c.Server.Addr)
 }
 
 func NewConfig(ctx context.Context, path string) (*Config, error) {
