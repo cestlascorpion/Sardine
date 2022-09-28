@@ -23,7 +23,7 @@ func NewAllocClient(target string, opts ...grpc.DialOption) (*Alloc, error) {
 	}, nil
 }
 
-func (c *Alloc) GenUserSeq(ctx context.Context, id uint32, tag string, opts ...grpc.CallOption) (int64, error) {
+func (c *Alloc) GenUserSeq(ctx context.Context, id uint32, tag string) (int64, error) {
 	resp, err := c.AllocClient.GenUserSeq(ctx, &pb.GenUserSeqReq{
 		Id:  id,
 		Tag: tag,
@@ -34,7 +34,7 @@ func (c *Alloc) GenUserSeq(ctx context.Context, id uint32, tag string, opts ...g
 	return resp.Id, nil
 }
 
-func (c *Alloc) GetUserSeq(ctx context.Context, id uint32, tag string, opts ...grpc.CallOption) (int64, error) {
+func (c *Alloc) GetUserSeq(ctx context.Context, id uint32, tag string) (int64, error) {
 	resp, err := c.AllocClient.GetUserSeq(ctx, &pb.GetUserSeqReq{
 		Id:  id,
 		Tag: tag,

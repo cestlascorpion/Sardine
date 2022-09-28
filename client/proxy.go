@@ -23,7 +23,7 @@ func NewProxyClient(target string, opts ...grpc.DialOption) (*Proxy, error) {
 	}, nil
 }
 
-func (c *Proxy) GenUserSeq(ctx context.Context, id uint32, tag string, opts ...grpc.CallOption) (int64, error) {
+func (c *Proxy) GenUserSeq(ctx context.Context, id uint32, tag string) (int64, error) {
 	resp, err := c.ProxyClient.GenUserSeq(ctx, &pb.GenUserSeqReq{
 		Id:  id,
 		Tag: tag,
@@ -34,7 +34,7 @@ func (c *Proxy) GenUserSeq(ctx context.Context, id uint32, tag string, opts ...g
 	return resp.Id, nil
 }
 
-func (c *Proxy) GetUserSeq(ctx context.Context, id uint32, tag string, opts ...grpc.CallOption) (int64, error) {
+func (c *Proxy) GetUserSeq(ctx context.Context, id uint32, tag string) (int64, error) {
 	resp, err := c.ProxyClient.GetUserSeq(ctx, &pb.GetUserSeqReq{
 		Id:  id,
 		Tag: tag,
@@ -45,7 +45,7 @@ func (c *Proxy) GetUserSeq(ctx context.Context, id uint32, tag string, opts ...g
 	return resp.Id, nil
 }
 
-func (c *Proxy) GenUserMultiSeq(ctx context.Context, id uint32, tagList []string, async bool, opts ...grpc.CallOption) (map[string]int64, error) {
+func (c *Proxy) GenUserMultiSeq(ctx context.Context, id uint32, tagList []string, async bool) (map[string]int64, error) {
 	resp, err := c.ProxyClient.GenUserMultiSeq(ctx, &pb.GenUserMultiSeqReq{
 		Id:      id,
 		TagList: tagList,
@@ -57,7 +57,7 @@ func (c *Proxy) GenUserMultiSeq(ctx context.Context, id uint32, tagList []string
 	return resp.GetSeqList(), nil
 }
 
-func (c *Proxy) GetUserMultiSeq(ctx context.Context, id uint32, tagList []string, opts ...grpc.CallOption) (map[string]int64, error) {
+func (c *Proxy) GetUserMultiSeq(ctx context.Context, id uint32, tagList []string) (map[string]int64, error) {
 	resp, err := c.ProxyClient.GetUserMultiSeq(ctx, &pb.GetUserMultiSeqReq{
 		Id:      id,
 		TagList: tagList,
@@ -68,7 +68,7 @@ func (c *Proxy) GetUserMultiSeq(ctx context.Context, id uint32, tagList []string
 	return resp.GetSeqList(), nil
 }
 
-func (c *Proxy) BatchGenUserSeq(ctx context.Context, idList []uint32, tag string, async bool, opts ...grpc.CallOption) (map[uint32]int64, error) {
+func (c *Proxy) BatchGenUserSeq(ctx context.Context, idList []uint32, tag string, async bool) (map[uint32]int64, error) {
 	resp, err := c.ProxyClient.BatchGenUserSeq(ctx, &pb.BatchGenUserSeqReq{
 		IdList: idList,
 		Tag:    tag,
@@ -80,7 +80,7 @@ func (c *Proxy) BatchGenUserSeq(ctx context.Context, idList []uint32, tag string
 	return resp.GetSeqList(), nil
 }
 
-func (c *Proxy) BatchGetUserSeq(ctx context.Context, idList []uint32, tag string, opts ...grpc.CallOption) (map[uint32]int64, error) {
+func (c *Proxy) BatchGetUserSeq(ctx context.Context, idList []uint32, tag string) (map[uint32]int64, error) {
 	resp, err := c.ProxyClient.BatchGetUserSeq(ctx, &pb.BatchGetUserSeqReq{
 		IdList: idList,
 		Tag:    tag,
