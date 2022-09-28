@@ -18,6 +18,7 @@ const (
 	MinUserId         = int64(0)
 	MaxUserId         = int64(math.MaxInt32)
 	DoNotChangeHash   = 512
+	DoNotChangeReduce = 256
 	DoNotChangeStep   = 10 * 10000
 	RegSectNum        = 5
 	RoutingSectNum    = 6

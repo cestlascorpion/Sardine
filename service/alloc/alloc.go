@@ -388,8 +388,9 @@ type section struct {
 }
 
 func newSection(maxSeq, curSeq int64) *section {
+	length := (utils.MaxUserId + utils.DoNotChangeStep - 1) / utils.DoNotChangeHash
 	seg := &section{
-		curSeq: make([]atomic.Int64, (utils.MaxUserId+utils.DoNotChangeStep-1)/utils.DoNotChangeHash),
+		curSeq: make([]atomic.Int64, (length+utils.DoNotChangeReduce-1)/utils.DoNotChangeReduce),
 		maxSeq: maxSeq,
 	}
 	for i := range seg.curSeq {
@@ -423,7 +424,7 @@ func (s *section) genUserSeq(ctx context.Context, id uint32) (int64, bool) {
 	max := s.maxSeq
 	s.mutex.RUnlock()
 
-	idx := id / utils.DoNotChangeHash
+	idx := id / utils.DoNotChangeHash / utils.DoNotChangeReduce
 	next := s.curSeq[idx].Add(1)
 
 	if next < max {
@@ -433,7 +434,7 @@ func (s *section) genUserSeq(ctx context.Context, id uint32) (int64, bool) {
 }
 
 func (s *section) getUserSeq(ctx context.Context, id uint32) int64 {
-	idx := id / utils.DoNotChangeHash
+	idx := id / utils.DoNotChangeHash / utils.DoNotChangeReduce
 	return s.curSeq[idx].Load()
 }
 
