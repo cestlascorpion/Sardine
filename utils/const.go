@@ -21,8 +21,8 @@ const (
 	DoNotChangeStep   = 10 * 10000
 	RegSectNum        = 5
 	RoutingSectNum    = 6
-	electionMasterTTL = 600
-	checkPendingCron  = "*/20 * * * *"
+	electionMasterTTL = 12
+	checkPendingCron  = "*/10 * * * *"
 	checkBalanceCron  = "*/2 * * * *"
 )
 

@@ -24,7 +24,7 @@ storage:
   etcd:
     endpoints: 127.0.0.1:2379
     identity: 127.0.0.1
-    election_ttl: 600
+    election_ttl: 12
 cronjob:
   check_pending: "*/10 * * * *"
   check_balance: "*/2 * * * *"
