@@ -17,28 +17,28 @@ func init() {
 func TestNewAlloc(t *testing.T) {
 	conf := utils.NewTestConfig()
 
-	proxy, err := NewAlloc(context.Background(), conf)
+	alloc, err := NewAlloc(context.Background(), conf)
 	if err != nil {
 		fmt.Println(err)
 		t.FailNow()
 	}
 	time.Sleep(time.Second * 20)
-	_ = proxy.Close(context.Background())
+	_ = alloc.Close(context.Background())
 	time.Sleep(time.Second * 2)
 }
 
 func TestSegment_GenUserSeq(t *testing.T) {
 	conf := utils.NewTestConfig()
 
-	proxy, err := NewAlloc(context.Background(), conf)
+	alloc, err := NewAlloc(context.Background(), conf)
 	if err != nil {
 		fmt.Println(err)
 		t.FailNow()
 	}
-	defer proxy.Close(context.Background())
+	defer alloc.Close(context.Background())
 
 	time.Sleep(time.Second * 20)
-	resp, err := proxy.GenUserSeq(context.Background(), 1234, "tag")
+	resp, err := alloc.GenUserSeq(context.Background(), 1234, "tag")
 	if err != nil {
 		fmt.Println(err)
 		t.FailNow()
@@ -49,15 +49,15 @@ func TestSegment_GenUserSeq(t *testing.T) {
 func TestSegment_GetUserSeq(t *testing.T) {
 	conf := utils.NewTestConfig()
 
-	proxy, err := NewAlloc(context.Background(), conf)
+	alloc, err := NewAlloc(context.Background(), conf)
 	if err != nil {
 		fmt.Println(err)
 		t.FailNow()
 	}
-	defer proxy.Close(context.Background())
+	defer alloc.Close(context.Background())
 
 	time.Sleep(time.Second * 20)
-	resp, err := proxy.GetUserSeq(context.Background(), 1234, "tag")
+	resp, err := alloc.GetUserSeq(context.Background(), 1234, "tag")
 	if err != nil {
 		fmt.Println(err)
 		t.FailNow()

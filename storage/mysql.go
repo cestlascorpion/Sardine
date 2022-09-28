@@ -57,7 +57,7 @@ func (m *MySQL) UpdateMaxId(ctx context.Context, key string) (int64, error) {
 
 	result, err := m.client.ExecContext(ctx, m.execSql, key, utils.DoNotChangeStep, utils.DoNotChangeStep)
 	if err != nil {
-		log.Errorf("sql exec contenxt err %+v", err)
+		log.Errorf("sql exec context err %+v", err)
 		return 0, err
 	}
 	changed, err := result.RowsAffected()
