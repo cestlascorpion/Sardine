@@ -23,7 +23,7 @@ func NewAssignClient(target string, opts ...grpc.DialOption) (*Assign, error) {
 	}, nil
 }
 
-func (c *Assign) RegSection(ctx context.Context, tag string, async bool, opts ...grpc.CallOption) error {
+func (c *Assign) RegSection(ctx context.Context, tag string, async bool) error {
 	_, err := c.AssignClient.RegSection(ctx, &pb.RegSectionReq{
 		Tag:   tag,
 		Async: async,
@@ -34,7 +34,7 @@ func (c *Assign) RegSection(ctx context.Context, tag string, async bool, opts ..
 	return nil
 }
 
-func (c *Assign) UnRegSection(ctx context.Context, tag string, async bool, opts ...grpc.CallOption) error {
+func (c *Assign) UnRegSection(ctx context.Context, tag string, async bool) error {
 	_, err := c.AssignClient.UnRegSection(ctx, &pb.UnRegSectionReq{
 		Tag:   tag,
 		Async: async,
