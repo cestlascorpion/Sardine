@@ -156,7 +156,6 @@ func (a *Assign) regSection(ctx context.Context, tag string) error {
 		if resp.Succeeded {
 			log.Infof("etcd put %s ok", sectKey)
 		}
-		time.Sleep(time.Millisecond * 250)
 	}
 	return nil
 }
