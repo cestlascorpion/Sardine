@@ -60,7 +60,7 @@ func NewAssign(ctx context.Context, conf *utils.Config) (*Assign, error) {
 		alloc: &allocTable{
 			table: make(map[string]*status),
 		},
-		assignRetry:  make(chan *reAssignInfo, 256),
+		assignRetry:  make(chan *reAssignInfo, 1024),
 		electionTTL:  conf.Storage.Etcd.ElectionTTL,
 		master:       atomic.NewBool(false),
 		checkPending: conf.Cronjob.CheckPending,
@@ -285,7 +285,7 @@ func (a *Assign) watchAlloc(ctx context.Context) {
 						}
 					}
 				default:
-					log.Warnf("unknow event type %v", wResp.Events[i].Type)
+					log.Warnf("unknown event type %v", wResp.Events[i].Type)
 				}
 			}
 		}
@@ -304,7 +304,7 @@ func (a *Assign) doRetry(ctx context.Context) {
 				sectKey := fmt.Sprintf("%s/%s", fmt.Sprintf(sectionPrefixFormat, a.table), info.sect)
 				resp, err := a.client.Get(ctx, sectKey)
 				if err != nil {
-					log.Error("etcd get %s err %+v", sectKey, err)
+					log.Errorf("etcd get %s err %+v", sectKey, err)
 					a.msgBot.SendMsg(ctx, "assign %s: etcd get %s err %+v", a.name, sectKey, err)
 					break
 				}
@@ -364,7 +364,7 @@ func (a *Assign) watchSect(ctx context.Context) {
 				case mvccpb.DELETE:
 					// do nothing
 				default:
-					log.Warnf("unknow event type %v", wResp.Events[i].Type)
+					log.Warnf("unknown event type %v", wResp.Events[i].Type)
 				}
 			}
 		}
@@ -425,7 +425,7 @@ func (a *Assign) watchRule(ctx context.Context) {
 				case mvccpb.DELETE:
 					a.onDelRule(ctx, wResp.Events[i].Kv.Key)
 				default:
-					log.Warnf("unknow event type %v", wResp.Events[i].Type)
+					log.Warnf("unknown event type %v", wResp.Events[i].Type)
 				}
 			}
 		}

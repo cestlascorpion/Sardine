@@ -263,7 +263,7 @@ func (a *Alloc) watchRule(ctx context.Context, prefix string) {
 				case mvccpb.DELETE:
 					a.delRule(ctx, wResp.Events[i].Kv.Key)
 				default:
-					log.Warnf("unknow event type %v", wResp.Events[i].Type)
+					log.Warnf("unknown event type %v", wResp.Events[i].Type)
 				}
 			}
 		}
@@ -369,7 +369,7 @@ func (a *Alloc) watchSect(ctx context.Context) {
 				case mvccpb.DELETE:
 					a.delSect(ctx, wResp.Events[i].Kv.Key)
 				default:
-					log.Warnf("unknow event type %v", wResp.Events[i].Type)
+					log.Warnf("unknown event type %v", wResp.Events[i].Type)
 				}
 			}
 		}
