@@ -27,6 +27,7 @@ type Alloc struct {
 	leaseCancel context.CancelFunc
 	mutex       sync.RWMutex
 	cache       map[string]*section
+	retry       chan string
 	store       storage.Store
 	msgBot      *utils.LarkBot
 }
@@ -74,6 +75,7 @@ func NewAlloc(ctx context.Context, conf *utils.Config) (*Alloc, error) {
 		name:   conf.GetEtcdId(),
 		client: cli,
 		cache:  make(map[string]*section),
+		retry:  make(chan string, 256),
 		store:  store,
 		msgBot: bot,
 	}
@@ -90,6 +92,7 @@ func NewAlloc(ctx context.Context, conf *utils.Config) (*Alloc, error) {
 		return nil, utils.ErrUnexpectedRules
 	}
 
+	alloc.doRetry(ctx)
 	alloc.watchRule(ctx, prefix)
 	alloc.watchSect(ctx)
 
@@ -190,6 +193,63 @@ func (a *Alloc) getSection(ctx context.Context, key string) (*section, error) {
 	return seg, nil
 }
 
+func (a *Alloc) doRetry(ctx context.Context) {
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case sect := <-a.retry:
+				_, err := a.getSection(ctx, sect)
+				if err != utils.ErrSectionNotReady {
+					log.Warnf("section %s is serving", sect)
+					break
+				}
+
+				maxSeq, err := a.store.UpdateMaxId(ctx, sect)
+				if err != nil {
+					log.Errorf("update max id for %s err %+v", sect, err)
+					a.msgBot.SendMsg(ctx, "alloc %s: update max id for %s err +v", a.name, sect, err)
+					break
+				}
+
+				seg := newSection(maxSeq, maxSeq-utils.DoNotChangeStep-1)
+
+				a.mutex.Lock()
+				a.cache[sect] = seg
+				a.mutex.Unlock()
+
+				routingKey := fmt.Sprintf("%s/%s", fmt.Sprintf(routingPrefixFormat, a.table, a.name), sect)
+				resp, err := a.client.Txn(ctx).If(
+					v3.Compare(v3.Value(routingKey), "=", "pending"),
+				).Then(
+					v3.OpPut(routingKey, "running"),
+				).Commit()
+
+				if err != nil {
+					a.mutex.Lock()
+					delete(a.cache, sect)
+					a.mutex.Unlock()
+					log.Errorf("etcd txn change key %s pending -> running err %+v", routingKey, err)
+					a.msgBot.SendMsg(ctx, "alloc %s: Txn %s pending -> running err %+v", a.name, routingKey, err)
+					break
+				}
+
+				if !resp.Succeeded {
+					a.mutex.Lock()
+					delete(a.cache, sect)
+					a.mutex.Unlock()
+					log.Errorf("etcd txn change key %s pending -> running failed", routingKey)
+					a.msgBot.SendMsg(ctx, "alloc %s: Txn %s pending -> running failed", a.name, routingKey)
+					break
+				}
+
+				log.Infof("set cache for %s", sect)
+			}
+		}
+	}()
+}
+
 func (a *Alloc) watchRule(ctx context.Context, prefix string) {
 	x, cancel := context.WithCancel(ctx)
 
@@ -235,6 +295,7 @@ func (a *Alloc) putRule(ctx context.Context, k, v []byte) {
 	maxSeq, err := a.store.UpdateMaxId(ctx, sect)
 	if err != nil {
 		log.Errorf("update max id for %s err %+v", sect, err)
+		a.retry <- sect
 		return
 	}
 
@@ -245,7 +306,7 @@ func (a *Alloc) putRule(ctx context.Context, k, v []byte) {
 	a.mutex.Unlock()
 
 	routingKey := fmt.Sprintf("%s/%s", fmt.Sprintf(routingPrefixFormat, a.table, a.name), sect)
-	_, err = a.client.Txn(ctx).If(
+	resp, err := a.client.Txn(ctx).If(
 		v3.Compare(v3.Value(routingKey), "=", "pending"),
 	).Then(
 		v3.OpPut(routingKey, "running"),
@@ -256,6 +317,16 @@ func (a *Alloc) putRule(ctx context.Context, k, v []byte) {
 		delete(a.cache, sect)
 		a.mutex.Unlock()
 		log.Errorf("etcd txn change key %s pending -> running err %+v", routingKey, err)
+		a.retry <- sect
+		return
+	}
+
+	if !resp.Succeeded {
+		a.mutex.Lock()
+		delete(a.cache, sect)
+		a.mutex.Unlock()
+		log.Errorf("etcd txn change key %s pending -> running failed", routingKey)
+		a.retry <- sect
 		return
 	}
 
@@ -329,6 +400,7 @@ func (a *Alloc) delSect(ctx context.Context, k []byte) {
 		log.Errorf("etcd del key %s err %+v", ruleKey, err)
 		return
 	}
+
 	log.Infof("etcd del key %s %d", ruleKey, resp.Deleted)
 }
 
