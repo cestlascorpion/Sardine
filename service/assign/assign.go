@@ -26,6 +26,7 @@ type Assign struct {
 	client       *v3.Client
 	alloc        *allocTable
 	watchCancel  []context.CancelFunc
+	assignRetry  chan *reAssignInfo
 	electionTTL  int
 	master       *atomic.Bool
 	checkPending string
@@ -59,6 +60,7 @@ func NewAssign(ctx context.Context, conf *utils.Config) (*Assign, error) {
 		alloc: &allocTable{
 			table: make(map[string]*status),
 		},
+		assignRetry:  make(chan *reAssignInfo, 1024),
 		electionTTL:  conf.Storage.Etcd.ElectionTTL,
 		master:       atomic.NewBool(false),
 		checkPending: conf.Cronjob.CheckPending,
@@ -81,6 +83,7 @@ func NewAssign(ctx context.Context, conf *utils.Config) (*Assign, error) {
 		assign.alloc.putAlloc(ctx, resp.Kvs[i].Key, resp.Kvs[i].Value, resp.Kvs[i].ModRevision)
 	}
 
+	assign.doRetry(ctx)
 	assign.watchSect(ctx)
 	assign.watchRule(ctx)
 
@@ -141,6 +144,11 @@ const (
 	routingPrefixFormat = "/segment/%s/routing"
 	assignMasterFormat  = "/segment/%s/assign/master"
 )
+
+type reAssignInfo struct {
+	sect  string
+	count int
+}
 
 func (a *Assign) regSection(ctx context.Context, tag string) error {
 	first, last := 0, utils.DoNotChangeHash
@@ -277,13 +285,70 @@ func (a *Assign) watchAlloc(ctx context.Context) {
 						}
 					}
 				default:
-					log.Warnf("unknow event type %v", wResp.Events[i].Type)
+					log.Warnf("unknown event type %v", wResp.Events[i].Type)
 				}
 			}
 		}
 	}(x)
 
 	a.watchCancel = append(a.watchCancel, cancel)
+}
+
+func (a *Assign) doRetry(ctx context.Context) {
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case info := <-a.assignRetry:
+				sectKey := fmt.Sprintf("%s/%s", fmt.Sprintf(sectionPrefixFormat, a.table), info.sect)
+				resp, err := a.client.Get(ctx, sectKey)
+				if err != nil {
+					log.Errorf("etcd get %s err %+v", sectKey, err)
+					a.msgBot.SendMsg(ctx, "assign %s: etcd get %s err %+v", a.name, sectKey, err)
+					break
+				}
+
+				if resp.Count == 0 {
+					break // sect unregister
+				}
+
+				if string(resp.Kvs[0].Value) != "pending" {
+					break // already done
+				}
+
+				alloc, err := a.assign(ctx, info.sect)
+				if err != nil {
+					log.Errorf("assign sect %s err %+v", info.sect, err)
+					a.msgBot.SendMsg(ctx, "assign %s: assign sect %s err %+v", a.name, info.sect, err)
+					break
+				}
+
+				allocKey := fmt.Sprintf("%s/%s", fmt.Sprintf(allocPrefixFormat, a.table), alloc)
+				ruleKey := fmt.Sprintf("%s/%s/%s", fmt.Sprintf(routingPrefixFormat, a.table), alloc, info.sect)
+				txnResp, err := a.client.Txn(ctx).
+					If(v3.Compare(v3.Value(sectKey), "=", "pending"), v3.Compare(v3.Version(allocKey), "!=", 0)).
+					Then(v3.OpPut(sectKey, "running"), v3.OpPut(ruleKey, "pending")).
+					Commit()
+				if err != nil {
+					log.Errorf("etcd txn change sect %s pending -> running & put rule %s err %+v", info.sect, ruleKey, err)
+					a.msgBot.SendMsg(ctx, "assign %s: etcd txn change sect %s pending -> running & put rule %s err %+v", a.name, info.sect, ruleKey, err)
+					break
+				}
+
+				if !txnResp.Succeeded {
+					log.Warnf("etcd txn change sect %s pending -> running by others?", info.sect)
+					if info.count == 0 {
+						info.count++ // one check & retry
+						a.assignRetry <- info
+					}
+					break
+				}
+
+				log.Infof("assign sect %s to alloc %s and put rule %s ok", info.sect, alloc, ruleKey)
+			}
+		}
+	}()
 }
 
 func (a *Assign) watchSect(ctx context.Context) {
@@ -299,7 +364,7 @@ func (a *Assign) watchSect(ctx context.Context) {
 				case mvccpb.DELETE:
 					// do nothing
 				default:
-					log.Warnf("unknow event type %v", wResp.Events[i].Type)
+					log.Warnf("unknown event type %v", wResp.Events[i].Type)
 				}
 			}
 		}
@@ -326,17 +391,25 @@ func (a *Assign) onPutSect(ctx context.Context, k, v []byte) {
 		If(v3.Compare(v3.Value(string(k)), "=", "pending"), v3.Compare(v3.Version(allocKey), "!=", 0)).
 		Then(v3.OpPut(string(k), "running"), v3.OpPut(ruleKey, "pending")).
 		Commit()
-
 	if err != nil {
-		log.Errorf("etcd txn change sect %s pending -> running & put rule %s err %+v", string(k), ruleKey, err)
+		log.Errorf("etcd txn change sect %s pending -> running & put rule %s err %+v", sect, ruleKey, err)
+		a.assignRetry <- &reAssignInfo{
+			sect:  sect,
+			count: 0,
+		}
 		return
 	}
 
-	if resp.Succeeded {
-		log.Infof("assign sect %s to alloc %s and put rule %s ok", sect, alloc, ruleKey)
-	} else {
-		log.Debugf("assign sect %s by another assign", sect)
+	if !resp.Succeeded {
+		log.Warnf("etcd txn change sect %s pending -> running by others?", sect)
+		a.assignRetry <- &reAssignInfo{
+			sect:  sect,
+			count: 0,
+		}
+		return
 	}
+
+	log.Infof("assign sect %s to alloc %s and put rule %s ok", sect, alloc, ruleKey)
 }
 
 func (a *Assign) watchRule(ctx context.Context) {
@@ -352,7 +425,7 @@ func (a *Assign) watchRule(ctx context.Context) {
 				case mvccpb.DELETE:
 					a.onDelRule(ctx, wResp.Events[i].Kv.Key)
 				default:
-					log.Warnf("unknow event type %v", wResp.Events[i].Type)
+					log.Warnf("unknown event type %v", wResp.Events[i].Type)
 				}
 			}
 		}
@@ -374,11 +447,16 @@ func (a *Assign) onDelRule(ctx context.Context, k []byte) {
 		Commit()
 	if err != nil {
 		log.Errorf("etcd txn change sect %s running -> pending err %+v", sect, err)
+		a.msgBot.SendMsg(ctx, "assign %s: etcd txn change sect %s running -> pending err %+v ", a.name, sect, err)
 		return
 	}
-	if resp.Succeeded {
-		log.Infof("change sect %s from running -> pending", sect)
+
+	if !resp.Succeeded {
+		log.Debugf("etcd txn change sect %s running -> pending by others", sect)
+		return
 	}
+
+	log.Infof("change sect %s from running -> pending", sect)
 }
 
 func (a *Assign) assign(ctx context.Context, sect string) (string, error) {
@@ -427,12 +505,11 @@ func (a *Assign) election(ctx context.Context) {
 					log.Debugf("campaign fail %s", a.name)
 					a.master.Store(false)
 					_ = session.Close()
-					time.Sleep(time.Second * 5)
+					time.Sleep(time.Second * time.Duration(ttl/3))
 					break
 				}
 
 				a.master.Store(true)
-				log.Infof("campaign ok %s", a.name)
 				time.Sleep(time.Second * time.Duration(ttl/3))
 			}
 		}
@@ -440,93 +517,99 @@ func (a *Assign) election(ctx context.Context) {
 }
 
 func (a *Assign) runCronjob(ctx context.Context) error {
-	_, err := a.cronjob.AddFunc(a.checkPending, func() {
-		if !a.master.Load() {
-			return
-		}
-
-		prefix := fmt.Sprintf(sectionPrefixFormat, a.table)
-		resp, err := a.client.Get(ctx, prefix, v3.WithPrefix())
-		if err != nil {
-			log.Errorf("etcd get prefix %s err %+v", prefix, err)
-			return
-		}
-
-		for i := range resp.Kvs {
-			a.onPutSect(ctx, resp.Kvs[i].Key, resp.Kvs[i].Value)
-		}
-	})
-	if err != nil {
-		log.Errorf("cron add func err %+v", err)
-		return err
-	}
-
-	_, err = a.cronjob.AddFunc(a.checkBalance, func() {
-		if !a.master.Load() {
-			return
-		}
-
-		prefix := fmt.Sprintf(routingPrefixFormat, a.table)
-		resp, err := a.client.Get(ctx, prefix, v3.WithPrefix())
-		if err != nil {
-			log.Errorf("etcd get prefix %s err %+v", prefix, err)
-			return
-		}
-
-		snapshot := make(map[string]string)
-		sections := make([]string, 0)
-		for i := range resp.Kvs {
-			alloc, sect := extractRouting(ctx, resp.Kvs[i].Key)
-			if len(alloc) == 0 || len(sect) == 0 {
+	if len(a.checkPending) != 0 {
+		_, err := a.cronjob.AddFunc(a.checkPending, func() {
+			if !a.master.Load() {
 				return
 			}
-			snapshot[sect] = alloc
-			sections = append(sections, sect)
-		}
 
-		target, err := a.batchAssign(ctx, sections)
-		if err != nil {
-			log.Errorf("batch assign err %+v", err)
-			return
-		}
-
-		reAssign := delta(ctx, target, snapshot)
-		for i := 1; i < len(a.snapshots); i++ {
-			a.snapshots[i-1] = a.snapshots[i]
-		}
-		a.snapshots[len(a.snapshots)-1] = reAssign
-
-		for i := range a.snapshots {
-			if a.snapshots[i] == nil || len(a.snapshots[i]) < len(sections)/10 {
-				return
-			}
-		}
-
-		for i := 1; i < len(a.snapshots); i++ {
-			if !equal(ctx, a.snapshots[i-1], a.snapshots[i]) {
-				return
-			}
-		}
-
-		for sect, change := range reAssign {
-			ruleKey := fmt.Sprintf("%s/%s/%s", fmt.Sprintf(routingPrefixFormat, a.table), change[0], sect)
-			resp, err := a.client.Txn(ctx).
-				If(v3.Compare(v3.Version(ruleKey), "!=", 0)).
-				Then(v3.OpDelete(ruleKey)).
-				Commit()
+			prefix := fmt.Sprintf(sectionPrefixFormat, a.table)
+			resp, err := a.client.Get(ctx, prefix, v3.WithPrefix())
 			if err != nil {
-				log.Errorf("etcd txn delete rule key %s err %+v", ruleKey, err)
+				log.Errorf("etcd get prefix %s err %+v", prefix, err)
 				return
 			}
-			if resp.Succeeded {
-				log.Infof("rebalance for sect %s %v", sect, change)
+
+			for i := range resp.Kvs {
+				a.onPutSect(ctx, resp.Kvs[i].Key, resp.Kvs[i].Value)
 			}
+		})
+		if err != nil {
+			log.Errorf("cron add func err %+v", err)
+			return err
 		}
-	})
-	if err != nil {
-		log.Errorf("cron add func err %+v", err)
-		return err
 	}
+
+	if len(a.checkBalance) != 0 {
+		_, err := a.cronjob.AddFunc(a.checkBalance, func() {
+			if !a.master.Load() {
+				return
+			}
+
+			prefix := fmt.Sprintf(routingPrefixFormat, a.table)
+			resp, err := a.client.Get(ctx, prefix, v3.WithPrefix())
+			if err != nil {
+				log.Errorf("etcd get prefix %s err %+v", prefix, err)
+				return
+			}
+
+			snapshot := make(map[string]string)
+			sections := make([]string, 0)
+			for i := range resp.Kvs {
+				alloc, sect := extractRouting(ctx, resp.Kvs[i].Key)
+				if len(alloc) == 0 || len(sect) == 0 {
+					return
+				}
+				snapshot[sect] = alloc
+				sections = append(sections, sect)
+			}
+
+			target, err := a.batchAssign(ctx, sections)
+			if err != nil {
+				log.Errorf("batch assign err %+v", err)
+				return
+			}
+
+			reAssign := delta(ctx, target, snapshot)
+			for i := 1; i < len(a.snapshots); i++ {
+				a.snapshots[i-1] = a.snapshots[i]
+			}
+			a.snapshots[len(a.snapshots)-1] = reAssign
+
+			for i := range a.snapshots {
+				if a.snapshots[i] == nil || len(a.snapshots[i]) < len(sections)/5 {
+					return
+				}
+			}
+
+			for i := 1; i < len(a.snapshots); i++ {
+				if !equal(ctx, a.snapshots[i-1], a.snapshots[i]) {
+					return
+				}
+			}
+
+			for sect, change := range reAssign {
+				ruleKey := fmt.Sprintf("%s/%s/%s", fmt.Sprintf(routingPrefixFormat, a.table), change[0], sect)
+				resp, err := a.client.Txn(ctx).
+					If(v3.Compare(v3.Version(ruleKey), "!=", 0)).
+					Then(v3.OpDelete(ruleKey)).
+					Commit()
+				if err != nil {
+					log.Errorf("etcd txn delete rule key %s err %+v", ruleKey, err)
+					return
+				}
+
+				if resp.Succeeded {
+					log.Infof("rebalance for sect %s %v", sect, change)
+				}
+			}
+		})
+		if err != nil {
+			log.Errorf("cron add func err %+v", err)
+			return err
+		}
+	}
+
 	a.cronjob.Start()
 	return nil
 }
