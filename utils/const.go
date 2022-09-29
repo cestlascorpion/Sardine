@@ -22,8 +22,8 @@ const (
 	RegSectNum        = 5
 	RoutingSectNum    = 6
 	electionMasterTTL = 12
-	checkPendingCron  = "*/10 * * * *"
-	checkBalanceCron  = "*/2 * * * *"
+	checkPendingCron  = "15,45 * * * *"
+	checkBalanceCron  = "*/10 * * * *"
 )
 
 const (
