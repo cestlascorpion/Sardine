@@ -317,14 +317,14 @@ func (p *Proxy) watchRule(ctx context.Context, prefix string) {
 	x, cancel := context.WithCancel(ctx)
 
 	go func(ctx context.Context) {
-		wch := p.client.Watch(ctx, prefix, v3.WithPrefix())
+		wch := p.client.Watch(ctx, prefix, v3.WithPrefix(), v3.WithPrevKV())
 		for wResp := range wch {
 			for i := range wResp.Events {
 				switch wResp.Events[i].Type {
 				case mvccpb.PUT:
 					p.putRule(ctx, wResp.Events[i].Kv.Key, wResp.Events[i].Kv.Value, wResp.Events[i].Kv.ModRevision)
 				case mvccpb.DELETE:
-					p.delRule(ctx, wResp.Events[i].Kv.Key, wResp.Events[i].Kv.ModRevision)
+					p.delRule(ctx, wResp.Events[i].Kv.Key, wResp.Events[i].PrevKv.Value, wResp.Events[i].Kv.ModRevision)
 				default:
 					log.Warnf("unknown event type %v", wResp.Events[i].Type)
 				}
@@ -373,16 +373,21 @@ func (p *Proxy) putRule(ctx context.Context, k, v []byte, modify int64) {
 
 	if old.modVersion >= value.modVersion {
 		log.Warnf("put rule %s %s old %d >= new %d", addr, sect, old.modVersion, modify)
+		p.msgBot.SendMsg(ctx, "[SYS BUG] proxy %s: put rule %s %s old %d >= new %d", p.name, addr, sect, old.modVersion, modify)
 		return
 	}
 
 	p.router[sect] = value
 	log.Warnf("mod rule %s %s %+v", addr, sect, modify)
+	p.msgBot.SendMsg(ctx, "[SYS BUG] proxy %s: mod rule %s %s %+v", p.name, addr, sect, modify)
 }
 
-func (p *Proxy) delRule(ctx context.Context, k []byte, modify int64) {
+func (p *Proxy) delRule(ctx context.Context, k, v []byte, modify int64) {
 	addr, sect := parseRouting(ctx, string(k))
 	if len(addr) == 0 || len(sect) == 0 {
+		return
+	}
+	if string(v) != "running" {
 		return
 	}
 
@@ -392,11 +397,13 @@ func (p *Proxy) delRule(ctx context.Context, k []byte, modify int64) {
 	old, ok := p.router[sect]
 	if !ok {
 		log.Warnf("del rule %s %s %d not found", addr, sect, modify)
+		p.msgBot.SendMsg(ctx, "[SYS BUG] proxy %s: del rule %s %s %d not found", p.name, addr, sect, modify)
 		return
 	}
 
 	if old.modVersion >= modify {
 		log.Warnf("del rule %s %s old %d >= new %d", addr, sect, old.modVersion, modify)
+		p.msgBot.SendMsg(ctx, "[SYS BUG] proxy %s: del rule %s %s old %d >= new %d", p.name, addr, sect, old.modVersion, modify)
 		return
 	}
 
