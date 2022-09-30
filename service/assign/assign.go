@@ -327,7 +327,7 @@ func (a *Assign) doRetry(ctx context.Context) {
 				allocKey := fmt.Sprintf("%s/%s", fmt.Sprintf(allocPrefixFormat, a.table), alloc)
 				ruleKey := fmt.Sprintf("%s/%s/%s", fmt.Sprintf(routingPrefixFormat, a.table), alloc, info.sect)
 				txnResp, err := a.client.Txn(ctx).
-					If(v3.Compare(v3.Value(sectKey), "=", "pending"), v3.Compare(v3.Version(allocKey), "!=", 0)).
+					If(v3.Compare(v3.Value(sectKey), "=", "pending"), v3.Compare(v3.Version(allocKey), "!=", 0), v3.Compare(v3.Version(ruleKey), "=", 0)).
 					Then(v3.OpPut(sectKey, "running"), v3.OpPut(ruleKey, "pending")).
 					Commit()
 				if err != nil {
@@ -337,7 +337,7 @@ func (a *Assign) doRetry(ctx context.Context) {
 				}
 
 				if !txnResp.Succeeded {
-					log.Warnf("[retry] etcd txn change sect %s pending -> running not succeeded", info.sect)
+					log.Warnf("[retry] etcd txn change sect %s pending -> running with alloc %s not succeeded", info.sect, alloc)
 					if info.count == 0 {
 						info.count++ // one check & retry
 						a.assignRetry <- info
