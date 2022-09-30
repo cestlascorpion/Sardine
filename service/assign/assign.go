@@ -9,31 +9,23 @@ import (
 	"time"
 
 	"github.com/cestlascorpion/sardine/utils"
-	"github.com/robfig/cron/v3"
 	log "github.com/sirupsen/logrus"
 	"go.etcd.io/etcd/api/v3/mvccpb"
 	v3 "go.etcd.io/etcd/client/v3"
-	"go.etcd.io/etcd/client/v3/concurrency"
-	"go.uber.org/atomic"
 )
 
 // Assign watch /segment/{table}/alloc/{addr} and /segment/{table}/section/{tag}/{hashId}.
 // assign 'pending' section to a certain alloc and put routing rule(with 'pending' value). delete --prefix
 // routing key in case alloc crashed. watch routing rule to manage idle section to re-assign.
 type Assign struct {
-	table        string
-	name         string
-	client       *v3.Client
-	alloc        *allocTable
-	watchCancel  []context.CancelFunc
-	assignRetry  chan *reAssignInfo
-	electionTTL  int
-	master       *atomic.Bool
-	checkPending string
-	checkBalance string
-	cronjob      *cron.Cron
-	snapshots    []map[string][]string
-	msgBot       *utils.LarkBot
+	table       string
+	name        string
+	client      *v3.Client
+	alloc       *allocTable
+	watchCancel []context.CancelFunc
+	retry       chan *reAssignInfo
+	snapshots   []map[string][]string
+	msgBot      *utils.LarkBot
 }
 
 func NewAssign(ctx context.Context, conf *utils.Config) (*Assign, error) {
@@ -60,14 +52,9 @@ func NewAssign(ctx context.Context, conf *utils.Config) (*Assign, error) {
 		alloc: &allocTable{
 			table: make(map[string]*status),
 		},
-		assignRetry:  make(chan *reAssignInfo, 1024),
-		electionTTL:  conf.Storage.Etcd.ElectionTTL,
-		master:       atomic.NewBool(false),
-		checkPending: conf.Cronjob.CheckPending,
-		checkBalance: conf.Cronjob.CheckBalance,
-		cronjob:      cron.New(),
-		snapshots:    make([]map[string][]string, 3),
-		msgBot:       bot,
+		retry:     make(chan *reAssignInfo, 1024),
+		snapshots: make([]map[string][]string, 3),
+		msgBot:    bot,
 	}
 
 	assign.watchAlloc(ctx)
@@ -86,13 +73,6 @@ func NewAssign(ctx context.Context, conf *utils.Config) (*Assign, error) {
 	assign.doRetry(ctx)
 	assign.watchSect(ctx)
 	assign.watchRule(ctx)
-
-	assign.election(ctx)
-	err = assign.runCronjob(ctx)
-	if err != nil {
-		log.Errorf("assign run cronjob err %+v", err)
-		return nil, err
-	}
 
 	log.Infof("assign %s ready to go", assign.name)
 	assign.msgBot.SendMsg(ctx, "assign %s: ready to go", assign.name)
@@ -128,7 +108,6 @@ func (a *Assign) UnRegSection(ctx context.Context, tag string, async bool) error
 }
 
 func (a *Assign) Close(ctx context.Context) error {
-	a.cronjob.Stop()
 	for i := range a.watchCancel {
 		a.watchCancel[i]()
 	}
@@ -142,7 +121,6 @@ const (
 	allocPrefixFormat   = "/segment/%s/alloc"
 	sectionPrefixFormat = "/segment/%s/section"
 	routingPrefixFormat = "/segment/%s/routing"
-	assignMasterFormat  = "/segment/%s/assign/master"
 )
 
 type reAssignInfo struct {
@@ -300,12 +278,12 @@ func (a *Assign) doRetry(ctx context.Context) {
 			select {
 			case <-ctx.Done():
 				return
-			case info := <-a.assignRetry:
+			case info := <-a.retry:
 				sectKey := fmt.Sprintf("%s/%s", fmt.Sprintf(sectionPrefixFormat, a.table), info.sect)
 				resp, err := a.client.Get(ctx, sectKey)
 				if err != nil {
-					log.Errorf("etcd get %s err %+v", sectKey, err)
-					a.msgBot.SendMsg(ctx, "assign %s: etcd get %s err %+v", a.name, sectKey, err)
+					log.Errorf("[retry] etcd get %s err %+v", sectKey, err)
+					a.msgBot.SendMsg(ctx, "assign %s: [retry] etcd get %s err %+v", a.name, sectKey, err)
 					break
 				}
 
@@ -319,33 +297,33 @@ func (a *Assign) doRetry(ctx context.Context) {
 
 				alloc, err := a.assign(ctx, info.sect)
 				if err != nil {
-					log.Errorf("assign sect %s err %+v", info.sect, err)
-					a.msgBot.SendMsg(ctx, "assign %s: assign sect %s err %+v", a.name, info.sect, err)
+					log.Errorf("[retry] assign sect %s err %+v", info.sect, err)
+					a.msgBot.SendMsg(ctx, "assign %s: [retry] assign sect %s err %+v", a.name, info.sect, err)
 					break
 				}
 
 				allocKey := fmt.Sprintf("%s/%s", fmt.Sprintf(allocPrefixFormat, a.table), alloc)
 				ruleKey := fmt.Sprintf("%s/%s/%s", fmt.Sprintf(routingPrefixFormat, a.table), alloc, info.sect)
 				txnResp, err := a.client.Txn(ctx).
-					If(v3.Compare(v3.Value(sectKey), "=", "pending"), v3.Compare(v3.Version(allocKey), "!=", 0)).
+					If(v3.Compare(v3.Value(sectKey), "=", "pending"), v3.Compare(v3.Version(allocKey), "!=", 0), v3.Compare(v3.Version(ruleKey), "=", 0)).
 					Then(v3.OpPut(sectKey, "running"), v3.OpPut(ruleKey, "pending")).
 					Commit()
 				if err != nil {
-					log.Errorf("etcd txn change sect %s pending -> running & put rule %s err %+v", info.sect, ruleKey, err)
-					a.msgBot.SendMsg(ctx, "assign %s: etcd txn change sect %s pending -> running & put rule %s err %+v", a.name, info.sect, ruleKey, err)
+					log.Errorf("[retry] etcd txn change sect %s pending -> running & put rule %s err %+v", info.sect, ruleKey, err)
+					a.msgBot.SendMsg(ctx, "assign %s: [retry] etcd txn change sect %s pending -> running & put rule %s err %+v", a.name, info.sect, ruleKey, err)
 					break
 				}
 
 				if !txnResp.Succeeded {
-					log.Warnf("etcd txn change sect %s pending -> running by others?", info.sect)
+					log.Warnf("[retry] etcd txn change sect %s pending -> running with alloc %s not succeeded", info.sect, alloc)
 					if info.count == 0 {
 						info.count++ // one check & retry
-						a.assignRetry <- info
+						a.retry <- info
 					}
 					break
 				}
 
-				log.Infof("assign sect %s to alloc %s and put rule %s ok", info.sect, alloc, ruleKey)
+				log.Infof("[retry] assign sect %s to alloc %s and put rule %s ok", info.sect, alloc, ruleKey)
 			}
 		}
 	}()
@@ -388,12 +366,12 @@ func (a *Assign) onPutSect(ctx context.Context, k, v []byte) {
 	allocKey := fmt.Sprintf("%s/%s", fmt.Sprintf(allocPrefixFormat, a.table), alloc)
 	ruleKey := fmt.Sprintf("%s/%s/%s", fmt.Sprintf(routingPrefixFormat, a.table), alloc, sect)
 	resp, err := a.client.Txn(ctx).
-		If(v3.Compare(v3.Value(string(k)), "=", "pending"), v3.Compare(v3.Version(allocKey), "!=", 0)).
+		If(v3.Compare(v3.Value(string(k)), "=", "pending"), v3.Compare(v3.Version(allocKey), "!=", 0), v3.Compare(v3.Version(ruleKey), "=", 0)).
 		Then(v3.OpPut(string(k), "running"), v3.OpPut(ruleKey, "pending")).
 		Commit()
 	if err != nil {
 		log.Errorf("etcd txn change sect %s pending -> running & put rule %s err %+v", sect, ruleKey, err)
-		a.assignRetry <- &reAssignInfo{
+		a.retry <- &reAssignInfo{
 			sect:  sect,
 			count: 0,
 		}
@@ -401,8 +379,8 @@ func (a *Assign) onPutSect(ctx context.Context, k, v []byte) {
 	}
 
 	if !resp.Succeeded {
-		log.Warnf("etcd txn change sect %s pending -> running by others?", sect)
-		a.assignRetry <- &reAssignInfo{
+		log.Warnf("etcd txn change sect %s pending -> running not succeeded", sect)
+		a.retry <- &reAssignInfo{
 			sect:  sect,
 			count: 0,
 		}
@@ -452,7 +430,7 @@ func (a *Assign) onDelRule(ctx context.Context, k []byte) {
 	}
 
 	if !resp.Succeeded {
-		log.Debugf("etcd txn change sect %s running -> pending by others", sect)
+		log.Debugf("etcd txn change sect %s running -> pending not succeeded", sect)
 		return
 	}
 
@@ -483,135 +461,6 @@ func (a *Assign) batchAssign(ctx context.Context, sectList []string) (map[string
 		result[sectList[i]] = alloc
 	}
 	return result, nil
-}
-
-func (a *Assign) election(ctx context.Context) {
-	ttl := a.electionTTL
-	key := fmt.Sprintf(assignMasterFormat, a.table)
-
-	go func() {
-		for {
-			session, err := concurrency.NewSession(a.client, concurrency.WithTTL(ttl))
-			if err != nil {
-				log.Errorf("concurrency new session err %+v", err)
-				time.Sleep(time.Second * time.Duration(ttl/3))
-				continue
-			}
-
-			election := concurrency.NewElection(session, key)
-			for {
-				ok := campaign(ctx, election, a.name)
-				if !ok {
-					log.Debugf("campaign fail %s", a.name)
-					a.master.Store(false)
-					_ = session.Close()
-					time.Sleep(time.Second * time.Duration(ttl/3))
-					break
-				}
-
-				a.master.Store(true)
-				time.Sleep(time.Second * time.Duration(ttl/3))
-			}
-		}
-	}()
-}
-
-func (a *Assign) runCronjob(ctx context.Context) error {
-	if len(a.checkPending) != 0 {
-		_, err := a.cronjob.AddFunc(a.checkPending, func() {
-			if !a.master.Load() {
-				return
-			}
-
-			prefix := fmt.Sprintf(sectionPrefixFormat, a.table)
-			resp, err := a.client.Get(ctx, prefix, v3.WithPrefix())
-			if err != nil {
-				log.Errorf("etcd get prefix %s err %+v", prefix, err)
-				return
-			}
-
-			for i := range resp.Kvs {
-				a.onPutSect(ctx, resp.Kvs[i].Key, resp.Kvs[i].Value)
-			}
-		})
-		if err != nil {
-			log.Errorf("cron add func err %+v", err)
-			return err
-		}
-	}
-
-	if len(a.checkBalance) != 0 {
-		_, err := a.cronjob.AddFunc(a.checkBalance, func() {
-			if !a.master.Load() {
-				return
-			}
-
-			prefix := fmt.Sprintf(routingPrefixFormat, a.table)
-			resp, err := a.client.Get(ctx, prefix, v3.WithPrefix())
-			if err != nil {
-				log.Errorf("etcd get prefix %s err %+v", prefix, err)
-				return
-			}
-
-			snapshot := make(map[string]string)
-			sections := make([]string, 0)
-			for i := range resp.Kvs {
-				alloc, sect := extractRouting(ctx, resp.Kvs[i].Key)
-				if len(alloc) == 0 || len(sect) == 0 {
-					return
-				}
-				snapshot[sect] = alloc
-				sections = append(sections, sect)
-			}
-
-			target, err := a.batchAssign(ctx, sections)
-			if err != nil {
-				log.Errorf("batch assign err %+v", err)
-				return
-			}
-
-			reAssign := delta(ctx, target, snapshot)
-			for i := 1; i < len(a.snapshots); i++ {
-				a.snapshots[i-1] = a.snapshots[i]
-			}
-			a.snapshots[len(a.snapshots)-1] = reAssign
-
-			for i := range a.snapshots {
-				if a.snapshots[i] == nil || len(a.snapshots[i]) < len(sections)/5 {
-					return
-				}
-			}
-
-			for i := 1; i < len(a.snapshots); i++ {
-				if !equal(ctx, a.snapshots[i-1], a.snapshots[i]) {
-					return
-				}
-			}
-
-			for sect, change := range reAssign {
-				ruleKey := fmt.Sprintf("%s/%s/%s", fmt.Sprintf(routingPrefixFormat, a.table), change[0], sect)
-				resp, err := a.client.Txn(ctx).
-					If(v3.Compare(v3.Version(ruleKey), "!=", 0)).
-					Then(v3.OpDelete(ruleKey)).
-					Commit()
-				if err != nil {
-					log.Errorf("etcd txn delete rule key %s err %+v", ruleKey, err)
-					return
-				}
-
-				if resp.Succeeded {
-					log.Infof("rebalance for sect %s %v", sect, change)
-				}
-			}
-		})
-		if err != nil {
-			log.Errorf("cron add func err %+v", err)
-			return err
-		}
-	}
-
-	a.cronjob.Start()
-	return nil
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -662,52 +511,4 @@ func extractRouting(ctx context.Context, k []byte) (string, string) {
 
 	sect := fmt.Sprintf("%s/%s", content[utils.RoutingSectNum-2], content[utils.RoutingSectNum-1])
 	return content[utils.RoutingSectNum-3], sect
-}
-
-func campaign(ctx context.Context, election *concurrency.Election, name string) bool {
-	err := election.Campaign(ctx, name)
-	if err != nil {
-		log.Errorf("campaign err %+v", err)
-		return false
-	}
-	return true
-}
-
-func delta(ctx context.Context, target, current map[string]string) map[string][]string {
-	result := make(map[string][]string)
-	for k, v := range current {
-		val, ok := target[k]
-		if !ok {
-			continue // impossible
-		}
-		if v != val {
-			result[k] = []string{v, val}
-		}
-	}
-	return result
-}
-
-func equal(ctx context.Context, m, n map[string][]string) bool {
-	if len(m) != len(n) {
-		return false
-	}
-
-	for k, v := range m {
-		val, ok := n[k]
-		if !ok {
-			return false
-		}
-
-		if len(v) != len(val) {
-			return false
-		}
-
-		for i := range v {
-			if val[i] != v[i] {
-				return false
-			}
-		}
-	}
-
-	return true
 }

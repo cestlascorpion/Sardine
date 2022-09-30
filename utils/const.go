@@ -22,15 +22,12 @@ const (
 	DoNotChangeStep   = 10 * 10000
 	RegSectNum        = 5
 	RoutingSectNum    = 6
-	electionMasterTTL = 12
-	checkPendingCron  = "15,45 * * * *"
-	checkBalanceCron  = "*/10 * * * *"
 )
 
 const (
 	defaultStoreType = TypeRedis
 	defaultPrefix    = "seq"
-	defaultAllocEnv  = "MY_NODE_NAME"
+	defaultAllocEnv  = "MY_POD_IP"
 )
 
 type StorageType int
