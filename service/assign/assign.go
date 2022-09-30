@@ -304,8 +304,8 @@ func (a *Assign) doRetry(ctx context.Context) {
 				sectKey := fmt.Sprintf("%s/%s", fmt.Sprintf(sectionPrefixFormat, a.table), info.sect)
 				resp, err := a.client.Get(ctx, sectKey)
 				if err != nil {
-					log.Errorf("etcd get %s err %+v", sectKey, err)
-					a.msgBot.SendMsg(ctx, "assign %s: etcd get %s err %+v", a.name, sectKey, err)
+					log.Errorf("[retry] etcd get %s err %+v", sectKey, err)
+					a.msgBot.SendMsg(ctx, "assign %s: [retry] etcd get %s err %+v", a.name, sectKey, err)
 					break
 				}
 
@@ -319,8 +319,8 @@ func (a *Assign) doRetry(ctx context.Context) {
 
 				alloc, err := a.assign(ctx, info.sect)
 				if err != nil {
-					log.Errorf("assign sect %s err %+v", info.sect, err)
-					a.msgBot.SendMsg(ctx, "assign %s: assign sect %s err %+v", a.name, info.sect, err)
+					log.Errorf("[retry] assign sect %s err %+v", info.sect, err)
+					a.msgBot.SendMsg(ctx, "assign %s: [retry] assign sect %s err %+v", a.name, info.sect, err)
 					break
 				}
 
@@ -331,13 +331,13 @@ func (a *Assign) doRetry(ctx context.Context) {
 					Then(v3.OpPut(sectKey, "running"), v3.OpPut(ruleKey, "pending")).
 					Commit()
 				if err != nil {
-					log.Errorf("etcd txn change sect %s pending -> running & put rule %s err %+v", info.sect, ruleKey, err)
-					a.msgBot.SendMsg(ctx, "assign %s: etcd txn change sect %s pending -> running & put rule %s err %+v", a.name, info.sect, ruleKey, err)
+					log.Errorf("[retry] etcd txn change sect %s pending -> running & put rule %s err %+v", info.sect, ruleKey, err)
+					a.msgBot.SendMsg(ctx, "assign %s: [retry] etcd txn change sect %s pending -> running & put rule %s err %+v", a.name, info.sect, ruleKey, err)
 					break
 				}
 
 				if !txnResp.Succeeded {
-					log.Warnf("etcd txn change sect %s pending -> running not succeeded", info.sect)
+					log.Warnf("[retry] etcd txn change sect %s pending -> running not succeeded", info.sect)
 					if info.count == 0 {
 						info.count++ // one check & retry
 						a.assignRetry <- info
@@ -345,7 +345,7 @@ func (a *Assign) doRetry(ctx context.Context) {
 					break
 				}
 
-				log.Infof("assign sect %s to alloc %s and put rule %s ok", info.sect, alloc, ruleKey)
+				log.Infof("[retry] assign sect %s to alloc %s and put rule %s ok", info.sect, alloc, ruleKey)
 			}
 		}
 	}()

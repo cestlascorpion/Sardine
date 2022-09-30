@@ -202,14 +202,14 @@ func (a *Alloc) doRetry(ctx context.Context) {
 			case sect := <-a.retry:
 				_, err := a.getSection(ctx, sect)
 				if err != utils.ErrSectionNotReady {
-					log.Warnf("section %s is serving", sect)
+					log.Warnf("[retry] section %s is serving", sect)
 					break
 				}
 
 				maxSeq, err := a.store.UpdateMaxId(ctx, sect)
 				if err != nil {
-					log.Errorf("update max id for %s err %+v", sect, err)
-					a.msgBot.SendMsg(ctx, "alloc %s: update max id for %s err +v", a.name, sect, err)
+					log.Errorf("[retry] update max id for %s err %+v", sect, err)
+					a.msgBot.SendMsg(ctx, "alloc %s: [retry] update max id for %s err +v", a.name, sect, err)
 					break
 				}
 
@@ -230,12 +230,12 @@ func (a *Alloc) doRetry(ctx context.Context) {
 					a.mutex.Lock()
 					delete(a.cache, sect)
 					a.mutex.Unlock()
-					log.Errorf("etcd txn change key %s pending -> running err %+v", routingKey, err)
-					a.msgBot.SendMsg(ctx, "alloc %s: Txn %s pending -> running err %+v", a.name, routingKey, err)
+					log.Errorf("[retry] etcd txn change key %s pending -> running err %+v", routingKey, err)
+					a.msgBot.SendMsg(ctx, "alloc %s: [retry] Txn %s pending -> running err %+v", a.name, routingKey, err)
 					break
 				}
 
-				log.Infof("set cache for %s", sect)
+				log.Infof("[retry] set cache for %s", sect)
 			}
 		}
 	}()
