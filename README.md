@@ -21,7 +21,8 @@ SeqSvr: 分布式单调递增ID生成器
 
 ### AssignSvr 负责指派Alloc负责的用户段
 
-> - 注册 `section`，特殊情况下自动触发 `re-balancing` 操作
+> - 单例部署
+> - 注册/注销 `section`
 > - 监听有哪些 `Alloc` 实例可以用于分配，有哪些待分配的 `section`
 > - 按照一致性哈希规则将 `section` 分配给 `Alloc`
 > - 监听下线的 `Alloc`, 防止 `Alloc` 宕机未能及时删除路由规则
@@ -52,19 +53,8 @@ table: for_dev/for_test/for_prod 区分环境
 >- 内存 > 16G x 10，主要是 alloc 加载到内存中的占用
 >- etcd key 10 x 512 x 2 + 20 > 10240 个，section/routing 占大多数
 
-### auto-re-balance
+## TODO
 
-```txt
-// 间隔5min
-snapshot-map     snapshot-map     snapshot-map   ...
- target-map       target-map       target-map    ...
-     |                |                 |
-  delta-1          delta-2           delta-3     ... // map[sect][]{current-allc, target-alloc}
-   
-触发条件: alloc 处于稳定状态且存在不满足一致性哈希分配结果 delta-1 = delta-2 = delta-3 ...
-触发效果: 按照 delta 的规则重新分配不满足一致性哈希的 section
-```
-
-### TODO
-
-// reduce-memory usage
+> - Enable auto re-balance in assign server
+> - Reduce memory reduce of alloc server
+> - Remove the limitations of singleton deployment to assgin server

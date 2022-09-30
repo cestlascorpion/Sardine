@@ -15,21 +15,18 @@ var (
 )
 
 const (
-	MinUserId         = int64(0)
-	MaxUserId         = int64(math.MaxInt32)
-	DoNotChangeHash   = 512
-	DoNotChangeStep   = 10 * 10000
-	RegSectNum        = 5
-	RoutingSectNum    = 6
-	electionMasterTTL = 12
-	checkPendingCron  = "15,45 * * * *"
-	checkBalanceCron  = "*/10 * * * *"
+	MinUserId       = int64(0)
+	MaxUserId       = int64(math.MaxInt32)
+	DoNotChangeHash = 512
+	DoNotChangeStep = 10 * 10000
+	RegSectNum      = 5
+	RoutingSectNum  = 6
 )
 
 const (
 	defaultStoreType = TypeRedis
 	defaultPrefix    = "seq"
-	defaultAllocEnv  = "MY_NODE_NAME"
+	defaultAllocEnv  = "MY_POD_IP"
 )
 
 type StorageType int
