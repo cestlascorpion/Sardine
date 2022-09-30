@@ -26,7 +26,7 @@ type Assign struct {
 	client       *v3.Client
 	alloc        *allocTable
 	watchCancel  []context.CancelFunc
-	assignRetry  chan *reAssignInfo
+	retry        chan *reAssignInfo
 	electionTTL  int
 	master       *atomic.Bool
 	checkPending string
@@ -60,7 +60,7 @@ func NewAssign(ctx context.Context, conf *utils.Config) (*Assign, error) {
 		alloc: &allocTable{
 			table: make(map[string]*status),
 		},
-		assignRetry:  make(chan *reAssignInfo, 1024),
+		retry:        make(chan *reAssignInfo, 1024),
 		electionTTL:  conf.Storage.Etcd.ElectionTTL,
 		master:       atomic.NewBool(false),
 		checkPending: conf.Cronjob.CheckPending,
@@ -300,7 +300,7 @@ func (a *Assign) doRetry(ctx context.Context) {
 			select {
 			case <-ctx.Done():
 				return
-			case info := <-a.assignRetry:
+			case info := <-a.retry:
 				sectKey := fmt.Sprintf("%s/%s", fmt.Sprintf(sectionPrefixFormat, a.table), info.sect)
 				resp, err := a.client.Get(ctx, sectKey)
 				if err != nil {
@@ -340,7 +340,7 @@ func (a *Assign) doRetry(ctx context.Context) {
 					log.Warnf("[retry] etcd txn change sect %s pending -> running with alloc %s not succeeded", info.sect, alloc)
 					if info.count == 0 {
 						info.count++ // one check & retry
-						a.assignRetry <- info
+						a.retry <- info
 					}
 					break
 				}
@@ -388,12 +388,12 @@ func (a *Assign) onPutSect(ctx context.Context, k, v []byte) {
 	allocKey := fmt.Sprintf("%s/%s", fmt.Sprintf(allocPrefixFormat, a.table), alloc)
 	ruleKey := fmt.Sprintf("%s/%s/%s", fmt.Sprintf(routingPrefixFormat, a.table), alloc, sect)
 	resp, err := a.client.Txn(ctx).
-		If(v3.Compare(v3.Value(string(k)), "=", "pending"), v3.Compare(v3.Version(allocKey), "!=", 0)).
+		If(v3.Compare(v3.Value(string(k)), "=", "pending"), v3.Compare(v3.Version(allocKey), "!=", 0), v3.Compare(v3.Version(ruleKey), "=", 0)).
 		Then(v3.OpPut(string(k), "running"), v3.OpPut(ruleKey, "pending")).
 		Commit()
 	if err != nil {
 		log.Errorf("etcd txn change sect %s pending -> running & put rule %s err %+v", sect, ruleKey, err)
-		a.assignRetry <- &reAssignInfo{
+		a.retry <- &reAssignInfo{
 			sect:  sect,
 			count: 0,
 		}
@@ -402,7 +402,7 @@ func (a *Assign) onPutSect(ctx context.Context, k, v []byte) {
 
 	if !resp.Succeeded {
 		log.Warnf("etcd txn change sect %s pending -> running not succeeded", sect)
-		a.assignRetry <- &reAssignInfo{
+		a.retry <- &reAssignInfo{
 			sect:  sect,
 			count: 0,
 		}
