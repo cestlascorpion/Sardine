@@ -220,7 +220,7 @@ func (a *Alloc) doRetry(ctx context.Context) {
 				a.mutex.Unlock()
 
 				routingKey := fmt.Sprintf("%s/%s", fmt.Sprintf(routingPrefixFormat, a.table, a.name), sect)
-				resp, err := a.client.Txn(ctx).If(
+				_, err = a.client.Txn(ctx).If(
 					v3.Compare(v3.Value(routingKey), "=", "pending"),
 				).Then(
 					v3.OpPut(routingKey, "running"),
@@ -232,15 +232,6 @@ func (a *Alloc) doRetry(ctx context.Context) {
 					a.mutex.Unlock()
 					log.Errorf("etcd txn change key %s pending -> running err %+v", routingKey, err)
 					a.msgBot.SendMsg(ctx, "alloc %s: Txn %s pending -> running err %+v", a.name, routingKey, err)
-					break
-				}
-
-				if !resp.Succeeded {
-					a.mutex.Lock()
-					delete(a.cache, sect)
-					a.mutex.Unlock()
-					log.Errorf("etcd txn change key %s pending -> running failed", routingKey)
-					a.msgBot.SendMsg(ctx, "alloc %s: Txn %s pending -> running failed", a.name, routingKey)
 					break
 				}
 
@@ -306,7 +297,7 @@ func (a *Alloc) putRule(ctx context.Context, k, v []byte) {
 	a.mutex.Unlock()
 
 	routingKey := fmt.Sprintf("%s/%s", fmt.Sprintf(routingPrefixFormat, a.table, a.name), sect)
-	resp, err := a.client.Txn(ctx).If(
+	_, err = a.client.Txn(ctx).If(
 		v3.Compare(v3.Value(routingKey), "=", "pending"),
 	).Then(
 		v3.OpPut(routingKey, "running"),
@@ -317,15 +308,6 @@ func (a *Alloc) putRule(ctx context.Context, k, v []byte) {
 		delete(a.cache, sect)
 		a.mutex.Unlock()
 		log.Errorf("etcd txn change key %s pending -> running err %+v", routingKey, err)
-		a.retry <- sect
-		return
-	}
-
-	if !resp.Succeeded {
-		a.mutex.Lock()
-		delete(a.cache, sect)
-		a.mutex.Unlock()
-		log.Errorf("etcd txn change key %s pending -> running failed", routingKey)
 		a.retry <- sect
 		return
 	}

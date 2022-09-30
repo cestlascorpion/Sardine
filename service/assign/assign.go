@@ -337,7 +337,7 @@ func (a *Assign) doRetry(ctx context.Context) {
 				}
 
 				if !txnResp.Succeeded {
-					log.Warnf("etcd txn change sect %s pending -> running by others?", info.sect)
+					log.Warnf("etcd txn change sect %s pending -> running not succeeded", info.sect)
 					if info.count == 0 {
 						info.count++ // one check & retry
 						a.assignRetry <- info
@@ -401,7 +401,7 @@ func (a *Assign) onPutSect(ctx context.Context, k, v []byte) {
 	}
 
 	if !resp.Succeeded {
-		log.Warnf("etcd txn change sect %s pending -> running by others?", sect)
+		log.Warnf("etcd txn change sect %s pending -> running not succeeded", sect)
 		a.assignRetry <- &reAssignInfo{
 			sect:  sect,
 			count: 0,
@@ -452,7 +452,7 @@ func (a *Assign) onDelRule(ctx context.Context, k []byte) {
 	}
 
 	if !resp.Succeeded {
-		log.Debugf("etcd txn change sect %s running -> pending by others", sect)
+		log.Debugf("etcd txn change sect %s running -> pending not succeeded", sect)
 		return
 	}
 
