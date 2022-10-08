@@ -383,11 +383,12 @@ func (p *Proxy) putRule(ctx context.Context, k, v []byte, modify int64) {
 }
 
 func (p *Proxy) delRule(ctx context.Context, k, v []byte, modify int64) {
-	addr, sect := parseRouting(ctx, string(k))
-	if len(addr) == 0 || len(sect) == 0 {
+	if string(v) != "running" {
 		return
 	}
-	if string(v) != "running" {
+
+	addr, sect := parseRouting(ctx, string(k))
+	if len(addr) == 0 || len(sect) == 0 {
 		return
 	}
 
