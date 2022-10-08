@@ -12,6 +12,7 @@ var (
 	ErrAllocExists      = errors.New("alloc exists")
 	ErrUnexpectedRules  = errors.New("unexpected rules")
 	ErrAllocNotReady    = errors.New("alloc not ready")
+	ErrAssignTxnFailed  = errors.New("assign txn failed")
 )
 
 const (

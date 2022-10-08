@@ -52,4 +52,4 @@ table: for_dev/for_test/for_prod 区分环境
 
 > - Enable auto re-balance in assign server
 > - Reduce memory reduce of alloc server
-> - Remove the limitations of singleton deployment to assgin server
+> - Remove the limitations of singleton deployment to assign server

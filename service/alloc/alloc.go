@@ -27,7 +27,6 @@ type Alloc struct {
 	leaseCancel context.CancelFunc
 	mutex       sync.RWMutex
 	cache       map[string]*section
-	retry       chan string
 	store       storage.Store
 	msgBot      *utils.LarkBot
 }
@@ -75,7 +74,6 @@ func NewAlloc(ctx context.Context, conf *utils.Config) (*Alloc, error) {
 		name:   conf.GetEtcdId(),
 		client: cli,
 		cache:  make(map[string]*section),
-		retry:  make(chan string, 256),
 		store:  store,
 		msgBot: bot,
 	}
@@ -92,7 +90,6 @@ func NewAlloc(ctx context.Context, conf *utils.Config) (*Alloc, error) {
 		return nil, utils.ErrUnexpectedRules
 	}
 
-	alloc.doRetry(ctx)
 	alloc.watchRule(ctx, prefix)
 	alloc.watchSect(ctx)
 
@@ -193,66 +190,18 @@ func (a *Alloc) getSection(ctx context.Context, key string) (*section, error) {
 	return seg, nil
 }
 
-func (a *Alloc) doRetry(ctx context.Context) {
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case sect := <-a.retry:
-				_, err := a.getSection(ctx, sect)
-				if err != utils.ErrSectionNotReady {
-					log.Warnf("[retry] section %s is serving", sect)
-					break
-				}
-
-				maxSeq, err := a.store.UpdateMaxId(ctx, sect)
-				if err != nil {
-					log.Errorf("[retry] update max id for %s err %+v", sect, err)
-					a.msgBot.SendMsg(ctx, "alloc %s: [retry] update max id for %s err +v", a.name, sect, err)
-					break
-				}
-
-				seg := newSection(maxSeq, maxSeq-utils.DoNotChangeStep-1)
-
-				a.mutex.Lock()
-				a.cache[sect] = seg
-				a.mutex.Unlock()
-
-				routingKey := fmt.Sprintf("%s/%s", fmt.Sprintf(routingPrefixFormat, a.table, a.name), sect)
-				_, err = a.client.Txn(ctx).If(
-					v3.Compare(v3.Value(routingKey), "=", "pending"),
-				).Then(
-					v3.OpPut(routingKey, "running"),
-				).Commit()
-
-				if err != nil {
-					a.mutex.Lock()
-					delete(a.cache, sect)
-					a.mutex.Unlock()
-					log.Errorf("[retry] etcd txn change key %s pending -> running err %+v", routingKey, err)
-					a.msgBot.SendMsg(ctx, "alloc %s: [retry] Txn %s pending -> running err %+v", a.name, routingKey, err)
-					break
-				}
-
-				log.Infof("[retry] set cache for %s", sect)
-			}
-		}
-	}()
-}
-
 func (a *Alloc) watchRule(ctx context.Context, prefix string) {
 	x, cancel := context.WithCancel(ctx)
 
 	go func(ctx context.Context) {
-		wch := a.client.Watch(ctx, prefix, v3.WithPrefix())
+		wch := a.client.Watch(ctx, prefix, v3.WithPrefix(), v3.WithPrevKV())
 		for wResp := range wch {
 			for i := range wResp.Events {
 				switch wResp.Events[i].Type {
 				case mvccpb.PUT:
-					a.putRule(ctx, wResp.Events[i].Kv.Key, wResp.Events[i].Kv.Value)
+					a.putRule(ctx, wResp.Events[i].Kv.Key, wResp.Events[i].Kv.Value, wResp.Events[i].Kv.ModRevision)
 				case mvccpb.DELETE:
-					a.delRule(ctx, wResp.Events[i].Kv.Key)
+					a.delRule(ctx, wResp.Events[i].Kv.Key, wResp.Events[i].PrevKv.Value, wResp.Events[i].Kv.ModRevision)
 				default:
 					log.Warnf("unknown event type %v", wResp.Events[i].Type)
 				}
@@ -263,7 +212,7 @@ func (a *Alloc) watchRule(ctx context.Context, prefix string) {
 	a.watchCancel = append(a.watchCancel, cancel)
 }
 
-func (a *Alloc) putRule(ctx context.Context, k, v []byte) {
+func (a *Alloc) putRule(ctx context.Context, k, v []byte, modify int64) {
 	if string(v) != "pending" {
 		return
 	}
@@ -279,14 +228,15 @@ func (a *Alloc) putRule(ctx context.Context, k, v []byte) {
 
 	_, err := a.getSection(ctx, sect)
 	if err != utils.ErrSectionNotReady {
-		log.Warnf("section %s is serving", sect)
+		log.Warnf("sect %s is serving %d", sect, modify)
+		a.msgBot.SendMsg(ctx, "[SYS BUG] alloc %s: sect %s is serving", sect)
 		return
 	}
 
 	maxSeq, err := a.store.UpdateMaxId(ctx, sect)
 	if err != nil {
 		log.Errorf("update max id for %s err %+v", sect, err)
-		a.retry <- sect
+		a.msgBot.SendMsg(ctx, "[DB BUG] alloc %s: update max id for %s err %+v", a.name, sect, err)
 		return
 	}
 
@@ -304,18 +254,23 @@ func (a *Alloc) putRule(ctx context.Context, k, v []byte) {
 	).Commit()
 
 	if err != nil {
-		a.mutex.Lock()
-		delete(a.cache, sect)
-		a.mutex.Unlock()
 		log.Errorf("etcd txn change key %s pending -> running err %+v", routingKey, err)
-		a.retry <- sect
+		a.msgBot.SendMsg(ctx, "[ETCD BUG] alloc %s: etcd txn change key %s pending -> running err %+v", a.name, routingKey, err)
 		return
 	}
 
-	log.Infof("set cache for %s", sect)
+	/*
+		if !resp.Succeeded {
+			log.Errorf("etcd txn change key %s pending -> running not succeeded", routingKey)
+			a.msgBot.SendMsg(ctx, "[SYS BUG] alloc %s: etcd txn change key %s pending -> running not succeeded", a.name, routingKey)
+		}
+	*/
+
+	log.Infof("DO TXN PUT %s running IF %s pending", routingKey, routingKey)
+	log.Infof("set cache for %s %d", sect, modify)
 }
 
-func (a *Alloc) delRule(ctx context.Context, k []byte) {
+func (a *Alloc) delRule(ctx context.Context, k, v []byte, modify int64) {
 	addr, sect := parseRouting(ctx, string(k))
 	if len(addr) == 0 || len(sect) == 0 {
 		return
@@ -327,7 +282,7 @@ func (a *Alloc) delRule(ctx context.Context, k []byte) {
 
 	_, err := a.getSection(ctx, sect)
 	if err != nil {
-		log.Warnf("section %s is not serving", sect)
+		log.Warnf("sect %s %d is not serving", sect, modify)
 		return
 	}
 
@@ -335,21 +290,21 @@ func (a *Alloc) delRule(ctx context.Context, k []byte) {
 	delete(a.cache, sect)
 	a.mutex.Unlock()
 
-	log.Infof("del cache for %s", sect)
+	log.Infof("del cache for %s %d", sect, modify)
 }
 
 func (a *Alloc) watchSect(ctx context.Context) {
 	x, cancel := context.WithCancel(ctx)
 
 	go func(ctx context.Context) {
-		wch := a.client.Watch(ctx, fmt.Sprintf(sectionPrefixFormat, a.table), v3.WithPrefix())
+		wch := a.client.Watch(ctx, fmt.Sprintf(sectionPrefixFormat, a.table), v3.WithPrefix(), v3.WithPrevKV())
 		for wResp := range wch {
 			for i := range wResp.Events {
 				switch wResp.Events[i].Type {
 				case mvccpb.PUT:
 					// do nothing
 				case mvccpb.DELETE:
-					a.delSect(ctx, wResp.Events[i].Kv.Key)
+					a.delSect(ctx, wResp.Events[i].Kv.Key, wResp.Events[i].PrevKv.Value, wResp.Events[i].Kv.ModRevision)
 				default:
 					log.Warnf("unknown event type %v", wResp.Events[i].Type)
 				}
@@ -360,7 +315,7 @@ func (a *Alloc) watchSect(ctx context.Context) {
 	a.watchCancel = append(a.watchCancel, cancel)
 }
 
-func (a *Alloc) delSect(ctx context.Context, k []byte) {
+func (a *Alloc) delSect(ctx context.Context, k, v []byte, modify int64) {
 	sect := extractSection(ctx, k)
 	if len(sect) == 0 {
 		return
@@ -374,15 +329,17 @@ func (a *Alloc) delSect(ctx context.Context, k []byte) {
 	a.mutex.Lock()
 	delete(a.cache, sect)
 	a.mutex.Unlock()
-	log.Infof("del cache for %s", sect)
+	log.Infof("del cache for %s %d", sect, modify)
 
 	ruleKey := fmt.Sprintf("%s/%s", fmt.Sprintf(routingPrefixFormat, a.table, a.name), sect)
 	resp, err := a.client.Delete(ctx, ruleKey)
 	if err != nil {
 		log.Errorf("etcd del key %s err %+v", ruleKey, err)
+		a.msgBot.SendMsg(ctx, "[ETCD BUG] alloc %s: etcd del key %s err %+v", a.name, ruleKey, err)
 		return
 	}
 
+	log.Infof("DO DELETE %s", ruleKey)
 	log.Infof("etcd del key %s %d", ruleKey, resp.Deleted)
 }
 
