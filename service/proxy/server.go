@@ -42,7 +42,7 @@ func (p *Server) GenUserSeq(ctx context.Context, in *pb.GenUserSeqReq) (*pb.GenU
 
 	seq, err := p.impl.GenUserSeq(ctx, in.Id, in.Tag)
 	if err == utils.ErrNoRoutingFound {
-		time.Sleep(time.Millisecond * 3)
+		time.Sleep(time.Millisecond * 250)
 		seq, err = p.impl.GenUserSeq(ctx, in.Id, in.Tag)
 	}
 	if err != nil {
@@ -64,7 +64,7 @@ func (p *Server) GetUserSeq(ctx context.Context, in *pb.GetUserSeqReq) (*pb.GetU
 
 	seq, err := p.impl.GetUserSeq(ctx, in.Id, in.Tag)
 	if err == utils.ErrNoRoutingFound {
-		time.Sleep(time.Millisecond * 3)
+		time.Sleep(time.Millisecond * 250)
 		seq, err = p.impl.GetUserSeq(ctx, in.Id, in.Tag)
 	}
 	if err != nil {
