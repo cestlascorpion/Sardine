@@ -59,10 +59,10 @@ func NewAssign(ctx context.Context, conf *utils.Config) (*Assign, error) {
 		master:  atomic.NewBool(false),
 		steady:  atomic.NewBool(false),
 		cronjob: cron.New(),
-		reCheck: make(chan []byte, 1024),
 		alloc: &allocTable{
 			table: make(map[string]*status),
 		},
+		reCheck:   make(chan []byte, 1024),
 		snapshots: make([]map[string][]string, 3),
 		msgBot:    bot,
 	}
@@ -572,8 +572,10 @@ func (a *Assign) reBalance(ctx context.Context) {
 		}
 
 		a.steady.Store(true)
+		log.Infof("------ start re-balance ------")
 		for sect, change := range reAssign {
 			if !a.steady.Load() {
+				log.Infof("not steady, just quit re-balance")
 				return
 			}
 
@@ -592,6 +594,7 @@ func (a *Assign) reBalance(ctx context.Context) {
 				log.Infof("rebalance for sect %s %v", sect, change)
 			}
 		}
+		log.Infof("------ end re-balance ------")
 	})
 	if err != nil {
 		log.Errorf("set cronjob err %+v", err)
