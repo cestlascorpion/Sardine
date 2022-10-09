@@ -25,7 +25,6 @@ type Assign struct {
 	name        string
 	client      *v3.Client
 	master      *atomic.Bool
-	steady      *atomic.Bool
 	cronjob     *cron.Cron
 	alloc       *allocTable
 	reCheck     chan []byte
@@ -57,7 +56,6 @@ func NewAssign(ctx context.Context, conf *utils.Config) (*Assign, error) {
 		name:    conf.GetEtcdId(),
 		client:  cli,
 		master:  atomic.NewBool(false),
-		steady:  atomic.NewBool(false),
 		cronjob: cron.New(),
 		alloc: &allocTable{
 			table: make(map[string]*status),
@@ -257,8 +255,6 @@ func (a *Assign) watchAlloc(ctx context.Context) {
 	go func(ctx context.Context) {
 		wch := a.client.Watch(ctx, fmt.Sprintf(allocPrefixFormat, a.table), v3.WithPrefix(), v3.WithPrevKV())
 		for wResp := range wch {
-			a.steady.Store(false)
-
 			for i := range wResp.Events {
 				switch wResp.Events[i].Type {
 				case mvccpb.PUT:
@@ -368,8 +364,6 @@ func (a *Assign) watchSect(ctx context.Context) {
 	go func(ctx context.Context) {
 		wch := a.client.Watch(ctx, fmt.Sprintf(sectionPrefixFormat, a.table), v3.WithPrefix(), v3.WithPrevKV())
 		for wResp := range wch {
-			a.steady.Store(false)
-
 			for i := range wResp.Events {
 				switch wResp.Events[i].Type {
 				case mvccpb.PUT:
@@ -425,8 +419,6 @@ func (a *Assign) watchRule(ctx context.Context) {
 	go func(ctx context.Context) {
 		wch := a.client.Watch(ctx, fmt.Sprintf(routingPrefixFormat, a.table), v3.WithPrefix(), v3.WithPrevKV())
 		for wResp := range wch {
-			a.steady.Store(false)
-
 			for i := range wResp.Events {
 				switch wResp.Events[i].Type {
 				case mvccpb.PUT:
@@ -571,14 +563,8 @@ func (a *Assign) reBalance(ctx context.Context) {
 			}
 		}
 
-		a.steady.Store(true)
 		log.Infof("------ start re-balance ------")
 		for sect, change := range reAssign {
-			if !a.steady.Load() {
-				log.Infof("not steady, just quit re-balance")
-				return
-			}
-
 			ruleKey := fmt.Sprintf("%s/%s/%s", fmt.Sprintf(routingPrefixFormat, a.table), change[0], sect)
 			resp, err := a.client.Txn(ctx).
 				If(v3.Compare(v3.Value(ruleKey), "=", "running")).
