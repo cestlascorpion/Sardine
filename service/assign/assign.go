@@ -190,10 +190,10 @@ func (a *Assign) snapshot(ctx context.Context) []string {
 	return snapshot
 }
 
-func (a *Assign) putAlloc(ctx context.Context, k, v []byte, modify int64) bool {
+func (a *Assign) putAlloc(ctx context.Context, k, v []byte, modify int64) {
 	name, ts := parseAlloc(ctx, k, v)
 	if len(name) == 0 {
-		return false
+		return
 	}
 
 	a.alloc.mutex.Lock()
@@ -206,26 +206,25 @@ func (a *Assign) putAlloc(ctx context.Context, k, v []byte, modify int64) bool {
 			timestamp:  ts,
 		}
 		log.Infof("add alloc %s %d %d", name, modify, ts)
-		return true
+		return
 	}
 
 	if st.modVersion >= modify {
 		log.Warnf("put alloc %s old %d >= new %d", name, st.modVersion, modify)
 		a.msgBot.SendMsg(ctx, "[SYS BUG] assign %s: put alloc %s old %d >= new %d", a.name, name, st.modVersion, modify)
-		return false
+		return
 	}
 
 	log.Warnf("mod alloc %s %d %d -> %d %d", name, st.modVersion, st.timestamp, modify, ts)
 	a.msgBot.SendMsg(ctx, "[SYS BUG] assign %s: mod alloc %s %d %d -> %d %d", a.name, name, st.modVersion, st.timestamp, modify, ts)
 	st.modVersion = modify
 	st.timestamp = ts
-	return false
 }
 
-func (a *Assign) delAlloc(ctx context.Context, k, v []byte, modify int64) bool {
+func (a *Assign) delAlloc(ctx context.Context, k, v []byte, modify int64) {
 	name, _ := parseAlloc(ctx, k, nil)
 	if len(name) == 0 {
-		return false
+		return
 	}
 
 	a.alloc.mutex.Lock()
@@ -235,18 +234,29 @@ func (a *Assign) delAlloc(ctx context.Context, k, v []byte, modify int64) bool {
 	if !ok {
 		log.Warnf("del alloc %s %d not found", name, modify)
 		a.msgBot.SendMsg(ctx, "[SYS BUG] assign %s: del alloc %s %d not found", a.name, name, modify)
-		return false
+		return
 	}
 
 	if st.modVersion >= modify {
 		log.Warnf("del alloc %s old %d >= new %d", name, st.modVersion, modify)
 		a.msgBot.SendMsg(ctx, "[SYS BUG] assign %s: del alloc %s old %d >= new %d", a.name, name, st.modVersion, modify)
-		return false
+		return
 	}
 
 	log.Infof("del alloc %s %d %d -> %d", name, st.modVersion, st.timestamp, modify)
 	delete(a.alloc.table, name)
-	return true
+
+	prefix := fmt.Sprintf("%s/%s", fmt.Sprintf(routingPrefixFormat, a.table), name)
+	resp, err := a.client.Delete(ctx, prefix, v3.WithPrefix())
+	if err != nil {
+		log.Errorf("etcd del prefix %s err %+v", prefix, err)
+		a.msgBot.SendMsg(ctx, "[ETCD BUG] assign %s: etcd del prefix %s err %+v", a.name, prefix, err)
+	} else {
+		if resp.Deleted > 0 {
+			log.Infof("DO DELETE %s --prefix %d", prefix, resp.Deleted)
+			log.Infof("etcd del prefix %s ok %d", prefix, resp.Deleted)
+		}
+	}
 }
 
 func (a *Assign) watchAlloc(ctx context.Context) {
@@ -258,25 +268,9 @@ func (a *Assign) watchAlloc(ctx context.Context) {
 			for i := range wResp.Events {
 				switch wResp.Events[i].Type {
 				case mvccpb.PUT:
-					_ = a.putAlloc(ctx, wResp.Events[i].Kv.Key, wResp.Events[i].Kv.Value, wResp.Events[i].Kv.ModRevision)
+					a.putAlloc(ctx, wResp.Events[i].Kv.Key, wResp.Events[i].Kv.Value, wResp.Events[i].Kv.ModRevision)
 				case mvccpb.DELETE:
-					ok := a.delAlloc(ctx, wResp.Events[i].Kv.Key, wResp.Events[i].PrevKv.Value, wResp.Events[i].Kv.ModRevision)
-					if ok {
-						alloc := extractAlloc(ctx, wResp.Events[i].Kv.Key)
-						log.Infof("del old alloc %s from table", alloc)
-
-						prefix := fmt.Sprintf("%s/%s", fmt.Sprintf(routingPrefixFormat, a.table), alloc)
-						resp, err := a.client.Delete(ctx, prefix, v3.WithPrefix())
-						if err != nil {
-							log.Errorf("etcd del prefix %s err %+v", prefix, err)
-							a.msgBot.SendMsg(ctx, "[ETCD BUG] assign %s: etcd del prefix %s err %+v", a.name, prefix, err)
-						} else {
-							if resp.Deleted > 0 {
-								log.Infof("DO DELETE %s --prefix %d", prefix, resp.Deleted)
-								log.Infof("etcd del prefix %s ok %d", prefix, resp.Deleted)
-							}
-						}
-					}
+					a.delAlloc(ctx, wResp.Events[i].Kv.Key, wResp.Events[i].PrevKv.Value, wResp.Events[i].Kv.ModRevision)
 				}
 			}
 		}
