@@ -75,7 +75,10 @@ func (l *LarkBot) SendMsg(ctx context.Context, format string, args ...interface{
 	if len(l.webhook) == 0 || len(l.secret) == 0 {
 		return
 	}
+	go l.sendMsg(ctx, format, args...)
+}
 
+func (l *LarkBot) sendMsg(ctx context.Context, format string, args ...interface{}) {
 	timestamp := time.Now().Unix()
 	sign, err := Sign(l.secret, timestamp)
 	if err != nil {

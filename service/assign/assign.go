@@ -9,9 +9,12 @@ import (
 	"time"
 
 	"github.com/cestlascorpion/sardine/utils"
+	"github.com/robfig/cron/v3"
 	log "github.com/sirupsen/logrus"
 	"go.etcd.io/etcd/api/v3/mvccpb"
 	v3 "go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/client/v3/concurrency"
+	"go.uber.org/atomic"
 )
 
 // Assign watch /segment/{table}/alloc/{addr} and /segment/{table}/section/{tag}/{hashId}.
@@ -21,6 +24,9 @@ type Assign struct {
 	table       string
 	name        string
 	client      *v3.Client
+	master      *atomic.Bool
+	steady      *atomic.Bool
+	cronjob     *cron.Cron
 	alloc       *allocTable
 	reCheck     chan []byte
 	checkCancel context.CancelFunc
@@ -50,6 +56,9 @@ func NewAssign(ctx context.Context, conf *utils.Config) (*Assign, error) {
 		table:   conf.GetTable(),
 		name:    conf.GetEtcdId(),
 		client:  cli,
+		master:  atomic.NewBool(false),
+		steady:  atomic.NewBool(false),
+		cronjob: cron.New(),
 		reCheck: make(chan []byte, 1024),
 		alloc: &allocTable{
 			table: make(map[string]*status),
@@ -74,6 +83,7 @@ func NewAssign(ctx context.Context, conf *utils.Config) (*Assign, error) {
 	assign.doCheck(ctx)
 	assign.watchSect(ctx)
 	assign.watchRule(ctx)
+	assign.reBalance(ctx)
 
 	log.Infof("assign %s ready to go", assign.name)
 	assign.msgBot.SendMsg(ctx, "assign %s: ready to go", assign.name)
@@ -109,6 +119,8 @@ func (a *Assign) UnRegSection(ctx context.Context, tag string, async bool) error
 }
 
 func (a *Assign) Close(ctx context.Context) error {
+	a.cronjob.Stop()
+
 	for i := range a.watchCancel {
 		a.watchCancel[i]()
 	}
@@ -125,6 +137,7 @@ const (
 	allocPrefixFormat   = "/segment/%s/alloc"
 	sectionPrefixFormat = "/segment/%s/section"
 	routingPrefixFormat = "/segment/%s/routing"
+	assignMasterFormat  = "/segment/%s/assign/master"
 )
 
 func (a *Assign) regSection(ctx context.Context, tag string) error {
@@ -244,6 +257,8 @@ func (a *Assign) watchAlloc(ctx context.Context) {
 	go func(ctx context.Context) {
 		wch := a.client.Watch(ctx, fmt.Sprintf(allocPrefixFormat, a.table), v3.WithPrefix(), v3.WithPrevKV())
 		for wResp := range wch {
+			a.steady.Store(false)
+
 			for i := range wResp.Events {
 				switch wResp.Events[i].Type {
 				case mvccpb.PUT:
@@ -266,8 +281,6 @@ func (a *Assign) watchAlloc(ctx context.Context) {
 							}
 						}
 					}
-				default:
-					log.Warnf("unknown event type %v", wResp.Events[i].Type)
 				}
 			}
 		}
@@ -355,14 +368,14 @@ func (a *Assign) watchSect(ctx context.Context) {
 	go func(ctx context.Context) {
 		wch := a.client.Watch(ctx, fmt.Sprintf(sectionPrefixFormat, a.table), v3.WithPrefix(), v3.WithPrevKV())
 		for wResp := range wch {
+			a.steady.Store(false)
+
 			for i := range wResp.Events {
 				switch wResp.Events[i].Type {
 				case mvccpb.PUT:
 					a.putSect(ctx, wResp.Events[i].Kv.Key, wResp.Events[i].Kv.Value, wResp.Events[i].Kv.ModRevision)
 				case mvccpb.DELETE:
 					// do nothing
-				default:
-					log.Warnf("unknown event type %v", wResp.Events[i].Type)
 				}
 			}
 		}
@@ -412,14 +425,14 @@ func (a *Assign) watchRule(ctx context.Context) {
 	go func(ctx context.Context) {
 		wch := a.client.Watch(ctx, fmt.Sprintf(routingPrefixFormat, a.table), v3.WithPrefix(), v3.WithPrevKV())
 		for wResp := range wch {
+			a.steady.Store(false)
+
 			for i := range wResp.Events {
 				switch wResp.Events[i].Type {
 				case mvccpb.PUT:
 					// do nothing
 				case mvccpb.DELETE:
 					a.delRule(ctx, wResp.Events[i].Kv.Key, wResp.Events[i].PrevKv.Value, wResp.Events[i].Kv.ModRevision)
-				default:
-					log.Warnf("unknown event type %v", wResp.Events[i].Type)
 				}
 			}
 		}
@@ -458,10 +471,133 @@ func (a *Assign) assign(ctx context.Context, sect string) (string, error) {
 	snapshot := a.snapshot(ctx)
 	if len(snapshot) == 0 {
 		log.Errorf("no alloc to assign")
+		a.msgBot.SendMsg(ctx, "[SYS BUG] assign %s: no alloc to assign", a.name)
 		return "", utils.ErrAllocNotReady
 	}
 
 	return utils.NewHash(ctx, snapshot).Get(ctx, sect), nil
+}
+
+func (a *Assign) batchAssign(ctx context.Context, sectList []string) (map[string]string, error) {
+	result := make(map[string]string)
+	snapshot := a.snapshot(ctx)
+	if len(snapshot) == 0 {
+		log.Errorf("no alloc to assign")
+		a.msgBot.SendMsg(ctx, "[SYS BUG] assign %s: no alloc to assign", a.name)
+		return result, utils.ErrAllocNotReady
+	}
+
+	hash := utils.NewHash(ctx, snapshot)
+	for i := range sectList {
+		alloc := hash.Get(ctx, sectList[i])
+		result[sectList[i]] = alloc
+	}
+	return result, nil
+}
+
+func (a *Assign) reBalance(ctx context.Context) {
+	go func() {
+		ttl, key := 30, fmt.Sprintf(assignMasterFormat, a.table)
+
+		for {
+			session, err := concurrency.NewSession(a.client, concurrency.WithTTL(ttl))
+			if err != nil {
+				log.Errorf("concurrency new session err %+v", err)
+				time.Sleep(time.Second * time.Duration(ttl/3))
+				continue
+			}
+
+			election := concurrency.NewElection(session, key)
+			for {
+				ok := campaign(ctx, election, a.name)
+				if !ok {
+					log.Debugf("campaign fail %s", a.name)
+					a.master.Store(false)
+					_ = session.Close()
+					time.Sleep(time.Second * time.Duration(ttl/3))
+					break
+				}
+
+				a.master.Store(true)
+				time.Sleep(time.Second * time.Duration(ttl/3))
+			}
+		}
+	}()
+
+	_, err := a.cronjob.AddFunc("*/10 * * * *", func() {
+		if !a.master.Load() {
+			return
+		}
+
+		prefix := fmt.Sprintf(routingPrefixFormat, a.table)
+		resp, err := a.client.Get(ctx, prefix, v3.WithPrefix())
+		if err != nil {
+			log.Errorf("etcd get prefix %s err %+v", prefix, err)
+			return
+		}
+
+		snapshot := make(map[string]string)
+		sections := make([]string, 0)
+		for i := range resp.Kvs {
+			alloc, sect := extractRouting(ctx, resp.Kvs[i].Key)
+			if len(alloc) == 0 || len(sect) == 0 {
+				return
+			}
+			snapshot[sect] = alloc
+			sections = append(sections, sect)
+		}
+
+		target, err := a.batchAssign(ctx, sections)
+		if err != nil {
+			log.Errorf("batch assign err %+v", err)
+			return
+		}
+
+		reAssign := delta(ctx, target, snapshot)
+		for i := 1; i < len(a.snapshots); i++ {
+			a.snapshots[i-1] = a.snapshots[i]
+		}
+		a.snapshots[len(a.snapshots)-1] = reAssign
+
+		for i := range a.snapshots {
+			if a.snapshots[i] == nil || len(a.snapshots[i]) < len(sections)/5 {
+				return
+			}
+		}
+
+		for i := 1; i < len(a.snapshots); i++ {
+			if !equal(ctx, a.snapshots[i-1], a.snapshots[i]) {
+				return
+			}
+		}
+
+		a.steady.Store(true)
+		for sect, change := range reAssign {
+			if !a.steady.Load() {
+				return
+			}
+
+			ruleKey := fmt.Sprintf("%s/%s/%s", fmt.Sprintf(routingPrefixFormat, a.table), change[0], sect)
+			resp, err := a.client.Txn(ctx).
+				If(v3.Compare(v3.Value(ruleKey), "=", "running")).
+				Then(v3.OpDelete(ruleKey)).
+				Commit()
+			if err != nil {
+				log.Errorf("etcd txn delete rule key %s err %+v", ruleKey, err)
+				a.msgBot.SendMsg(ctx, "[ETCD BUG] assign %s: etcd txn delete rule key %s err %+v", a.name, ruleKey, err)
+				return
+			}
+
+			if resp.Succeeded {
+				log.Infof("rebalance for sect %s %v", sect, change)
+			}
+		}
+	})
+	if err != nil {
+		log.Errorf("set cronjob err %+v", err)
+		return
+	}
+	a.cronjob.Start()
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -521,4 +657,52 @@ func extractRouting(ctx context.Context, k []byte) (string, string) {
 
 	sect := fmt.Sprintf("%s/%s", content[utils.RoutingSectNum-2], content[utils.RoutingSectNum-1])
 	return content[utils.RoutingSectNum-3], sect
+}
+
+func campaign(ctx context.Context, election *concurrency.Election, name string) bool {
+	err := election.Campaign(ctx, name)
+	if err != nil {
+		log.Errorf("campaign err %+v", err)
+		return false
+	}
+	return true
+}
+
+func delta(ctx context.Context, target, current map[string]string) map[string][]string {
+	result := make(map[string][]string)
+	for k, v := range current {
+		val, ok := target[k]
+		if !ok {
+			continue // impossible
+		}
+		if v != val {
+			result[k] = []string{v, val}
+		}
+	}
+	return result
+}
+
+func equal(ctx context.Context, m, n map[string][]string) bool {
+	if len(m) != len(n) {
+		return false
+	}
+
+	for k, v := range m {
+		val, ok := n[k]
+		if !ok {
+			return false
+		}
+
+		if len(v) != len(val) {
+			return false
+		}
+
+		for i := range v {
+			if val[i] != v[i] {
+				return false
+			}
+		}
+	}
+
+	return true
 }

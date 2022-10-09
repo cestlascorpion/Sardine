@@ -325,8 +325,6 @@ func (p *Proxy) watchRule(ctx context.Context, prefix string) {
 					p.putRule(ctx, wResp.Events[i].Kv.Key, wResp.Events[i].Kv.Value, wResp.Events[i].Kv.ModRevision)
 				case mvccpb.DELETE:
 					p.delRule(ctx, wResp.Events[i].Kv.Key, wResp.Events[i].PrevKv.Value, wResp.Events[i].Kv.ModRevision)
-				default:
-					log.Warnf("unknown event type %v", wResp.Events[i].Type)
 				}
 			}
 		}
