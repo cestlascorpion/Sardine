@@ -36,7 +36,7 @@ table: for_dev/for_test/for_prod 区分环境
 /segment/{table}/alloc/{addr}                     | timestamp
 
 // 数量 = 业务场景数量 X 哈希组数量
-/segment/{table}/section/{tag}/{hashId}           | pending/running
+/segment/{table}/section/{tag}/{hashId}           | pending/addr
 
 // 数量 = 业务场景数量 X 哈希组数量
 /segment/{table}/routing/{addr}/{tag}/{hashId}    | pending/running
@@ -50,6 +50,5 @@ table: for_dev/for_test/for_prod 区分环境
 
 ## TODO
 
-> - Enable auto re-balance in assign server
 > - Reduce memory reduce of alloc server
-> - Remove the limitations of singleton deployment to assign server
+> - Fix memory leak of proxy server

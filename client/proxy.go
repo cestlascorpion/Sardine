@@ -10,6 +10,7 @@ import (
 
 type Proxy struct {
 	pb.ProxyClient
+	cc *grpc.ClientConn
 }
 
 func NewProxyClient(target string, opts ...grpc.DialOption) (*Proxy, error) {
@@ -20,6 +21,7 @@ func NewProxyClient(target string, opts ...grpc.DialOption) (*Proxy, error) {
 	}
 	return &Proxy{
 		ProxyClient: pb.NewProxyClient(conn),
+		cc:          conn,
 	}, nil
 }
 
@@ -89,4 +91,8 @@ func (c *Proxy) BatchGetUserSeq(ctx context.Context, idList []uint32, tag string
 		return nil, err
 	}
 	return resp.GetSeqList(), nil
+}
+
+func (c *Proxy) Close(ctx context.Context) error {
+	return c.cc.Close()
 }

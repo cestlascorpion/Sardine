@@ -73,21 +73,21 @@ func NewProxy(ctx context.Context, conf *utils.Config) (*Proxy, error) {
 }
 
 func (p *Proxy) GenUserSeq(ctx context.Context, id uint32, tag string) (int64, error) {
-	cli, err := p.getAlloc(ctx, id, tag)
+	seq, err := p.genSeq(ctx, id, tag)
 	if err != nil {
-		log.Errorf("get client for tag %s id %d err %+v", tag, id, err)
+		log.Errorf("gen seq %d %s err %+v", id, tag, err)
 		return 0, err
 	}
-	return cli.GenUserSeq(ctx, id, tag)
+	return seq, nil
 }
 
 func (p *Proxy) GetUserSeq(ctx context.Context, id uint32, tag string) (int64, error) {
-	cli, err := p.getAlloc(ctx, id, tag)
+	seq, err := p.getSeq(ctx, id, tag)
 	if err != nil {
-		log.Errorf("get client for tag %s id %d err %+v", tag, id, err)
+		log.Errorf("get seq %d %s err %+v", id, tag, err)
 		return 0, err
 	}
-	return cli.GetUserSeq(ctx, id, tag)
+	return seq, nil
 }
 
 func (p *Proxy) GenUserMultiSeq(ctx context.Context, id uint32, tagList []string, async bool) (map[string]int64, error) {
@@ -112,18 +112,11 @@ func (p *Proxy) GetUserMultiSeq(ctx context.Context, id uint32, tagList []string
 		go func(ctx context.Context, id uint32, tag string, idx int) {
 			defer wg.Done()
 
-			cli, err := p.getAlloc(ctx, id, tag)
+			seq, err := p.getSeq(ctx, id, tag)
 			if err != nil {
-				log.Warnf("get client for id %d tag %s err %+v", id, tag, err)
+				log.Errorf("get seq %d %s err %+v", id, tag, err)
 				return
 			}
-
-			seq, err := cli.GetUserSeq(ctx, id, tag)
-			if err != nil {
-				log.Warnf("get user seq for id %d tag %s err %+v", id, tag, err)
-				return
-			}
-
 			res[idx] = &multiResult{
 				tag: tag,
 				seq: seq,
@@ -166,18 +159,11 @@ func (p *Proxy) BatchGetUserSeq(ctx context.Context, idList []uint32, tag string
 		go func(ctx context.Context, id uint32, tag string, idx int) {
 			defer wg.Done()
 
-			cli, err := p.getAlloc(ctx, id, tag)
+			seq, err := p.getSeq(ctx, id, tag)
 			if err != nil {
-				log.Warnf("get client for id %d tag %s err %+v", id, tag, err)
+				log.Errorf("get seq %d %s err %+v", id, tag, err)
 				return
 			}
-
-			seq, err := cli.GetUserSeq(ctx, id, tag)
-			if err != nil {
-				log.Warnf("get user seq for id %d tag %s err %+v", id, tag, err)
-				return
-			}
-
 			res[idx] = &batchResult{
 				id:  id,
 				seq: seq,
@@ -210,7 +196,7 @@ const (
 	routingPrefixFormat = "/segment/%s/routing"
 )
 
-func (p *Proxy) getAlloc(ctx context.Context, id uint32, tag string) (*client.Alloc, error) {
+func (p *Proxy) getAlloc(id uint32, tag string) (*client.Alloc, error) {
 	key := fmt.Sprintf("%s/%d", tag, id%utils.DoNotChangeHash)
 
 	p.mutex.RLock()
@@ -237,18 +223,11 @@ func (p *Proxy) genUserMultiSeq(ctx context.Context, id uint32, tagList []string
 		go func(ctx context.Context, id uint32, tag string, idx int) {
 			defer wg.Done()
 
-			cli, err := p.getAlloc(ctx, id, tag)
+			seq, err := p.genSeq(ctx, id, tag)
 			if err != nil {
-				log.Warnf("get client for id %d tag %s err %+v", id, tag, err)
+				log.Errorf("gen seq %d %s err %+v", id, tag, err)
 				return
 			}
-
-			seq, err := cli.GenUserSeq(ctx, id, tag)
-			if err != nil {
-				log.Warnf("gen user seq for id %d tag %s err %+v", id, tag, err)
-				return
-			}
-
 			res[idx] = &multiResult{
 				tag: tag,
 				seq: seq,
@@ -282,18 +261,11 @@ func (p *Proxy) batchGenUserSeq(ctx context.Context, idList []uint32, tag string
 		go func(ctx context.Context, id uint32, tag string, idx int) {
 			defer wg.Done()
 
-			cli, err := p.getAlloc(ctx, id, tag)
+			seq, err := p.genSeq(ctx, id, tag)
 			if err != nil {
-				log.Warnf("get client for id %d tag %s err %+v", id, tag, err)
+				log.Errorf("gen seq %d %s err %+v", id, tag, err)
 				return
 			}
-
-			seq, err := cli.GenUserSeq(ctx, id, tag)
-			if err != nil {
-				log.Warnf("gen user seq for id %d tag %s err %+v", id, tag, err)
-				return
-			}
-
 			res[idx] = &batchResult{
 				id:  id,
 				seq: seq,
@@ -313,6 +285,50 @@ func (p *Proxy) batchGenUserSeq(ctx context.Context, idList []uint32, tag string
 	return result, nil
 }
 
+func (p *Proxy) genSeq(ctx context.Context, id uint32, tag string) (int64, error) {
+	var (
+		cli *client.Alloc
+		seq int64
+		err error
+	)
+
+	for try := 1; try <= utils.MaxRetryNum; try++ {
+		cli, err = p.getAlloc(id, tag)
+		if err == nil {
+			seq, err = cli.GenUserSeq(ctx, id, tag)
+			if err == nil {
+				return seq, nil
+			}
+		}
+		if try < utils.MaxRetryNum {
+			time.Sleep(utils.RetryInterval * time.Duration(try))
+		}
+	}
+	return seq, err
+}
+
+func (p *Proxy) getSeq(ctx context.Context, id uint32, tag string) (int64, error) {
+	var (
+		cli *client.Alloc
+		seq int64
+		err error
+	)
+
+	for try := 1; try <= utils.MaxRetryNum; try++ {
+		cli, err = p.getAlloc(id, tag)
+		if err == nil {
+			seq, err = cli.GetUserSeq(ctx, id, tag)
+			if err == nil {
+				return seq, nil
+			}
+		}
+		if try < utils.MaxRetryNum {
+			time.Sleep(utils.RetryInterval * time.Duration(try))
+		}
+	}
+	return seq, err
+}
+
 func (p *Proxy) watchRule(ctx context.Context, prefix string) {
 	x, cancel := context.WithCancel(ctx)
 
@@ -325,8 +341,6 @@ func (p *Proxy) watchRule(ctx context.Context, prefix string) {
 					p.putRule(ctx, wResp.Events[i].Kv.Key, wResp.Events[i].Kv.Value, wResp.Events[i].Kv.ModRevision)
 				case mvccpb.DELETE:
 					p.delRule(ctx, wResp.Events[i].Kv.Key, wResp.Events[i].PrevKv.Value, wResp.Events[i].Kv.ModRevision)
-				default:
-					log.Warnf("unknown event type %v", wResp.Events[i].Type)
 				}
 			}
 		}
@@ -383,11 +397,12 @@ func (p *Proxy) putRule(ctx context.Context, k, v []byte, modify int64) {
 }
 
 func (p *Proxy) delRule(ctx context.Context, k, v []byte, modify int64) {
-	addr, sect := parseRouting(ctx, string(k))
-	if len(addr) == 0 || len(sect) == 0 {
+	if string(v) != "running" {
 		return
 	}
-	if string(v) != "running" {
+
+	addr, sect := parseRouting(ctx, string(k))
+	if len(addr) == 0 || len(sect) == 0 {
 		return
 	}
 
@@ -407,6 +422,7 @@ func (p *Proxy) delRule(ctx context.Context, k, v []byte, modify int64) {
 		return
 	}
 
+	old.client.Close(ctx)
 	delete(p.router, sect)
 	log.Infof("del rule %s %s %d", addr, sect, modify)
 }

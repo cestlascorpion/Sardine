@@ -2,7 +2,6 @@ package proxy
 
 import (
 	"context"
-	"time"
 
 	pb "github.com/cestlascorpion/sardine/proto"
 	"github.com/cestlascorpion/sardine/utils"
@@ -41,10 +40,6 @@ func (p *Server) GenUserSeq(ctx context.Context, in *pb.GenUserSeqReq) (*pb.GenU
 	}
 
 	seq, err := p.impl.GenUserSeq(ctx, in.Id, in.Tag)
-	if err == utils.ErrNoRoutingFound {
-		time.Sleep(time.Millisecond * 3)
-		seq, err = p.impl.GenUserSeq(ctx, in.Id, in.Tag)
-	}
 	if err != nil {
 		log.Errorf("impl GenUserSeq err %+v", err)
 		return out, err
@@ -63,10 +58,6 @@ func (p *Server) GetUserSeq(ctx context.Context, in *pb.GetUserSeqReq) (*pb.GetU
 	}
 
 	seq, err := p.impl.GetUserSeq(ctx, in.Id, in.Tag)
-	if err == utils.ErrNoRoutingFound {
-		time.Sleep(time.Millisecond * 3)
-		seq, err = p.impl.GetUserSeq(ctx, in.Id, in.Tag)
-	}
 	if err != nil {
 		log.Errorf("impl GetUserSeq err %+v", err)
 		return out, err
