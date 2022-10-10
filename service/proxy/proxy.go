@@ -422,6 +422,7 @@ func (p *Proxy) delRule(ctx context.Context, k, v []byte, modify int64) {
 		return
 	}
 
+	old.client.Close(ctx)
 	delete(p.router, sect)
 	log.Infof("del rule %s %s %d", addr, sect, modify)
 }

@@ -24,6 +24,8 @@ func TestAlloc_GenUserSeq(t *testing.T) {
 		fmt.Println(err)
 		t.FailNow()
 	}
+	defer client.Close(context.Background())
+
 	resp, err := client.GenUserSeq(context.Background(), 1234, "tag")
 	if err != nil {
 		fmt.Println(err)
@@ -38,6 +40,8 @@ func TestAlloc_GetUserSeq(t *testing.T) {
 		fmt.Println(err)
 		t.FailNow()
 	}
+	defer client.Close(context.Background())
+
 	resp, err := client.GetUserSeq(context.Background(), 1234, "tag")
 	if err != nil {
 		fmt.Println(err)

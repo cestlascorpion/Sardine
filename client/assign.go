@@ -10,6 +10,7 @@ import (
 
 type Assign struct {
 	pb.AssignClient
+	cc *grpc.ClientConn
 }
 
 func NewAssignClient(target string, opts ...grpc.DialOption) (*Assign, error) {
@@ -20,6 +21,7 @@ func NewAssignClient(target string, opts ...grpc.DialOption) (*Assign, error) {
 	}
 	return &Assign{
 		AssignClient: pb.NewAssignClient(conn),
+		cc:           conn,
 	}, nil
 }
 
@@ -43,4 +45,8 @@ func (c *Assign) UnRegSection(ctx context.Context, tag string, async bool) error
 		return err
 	}
 	return nil
+}
+
+func (c *Assign) Close(ctx context.Context) error {
+	return c.cc.Close()
 }

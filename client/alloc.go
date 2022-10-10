@@ -10,6 +10,7 @@ import (
 
 type Alloc struct {
 	pb.AllocClient
+	cc *grpc.ClientConn
 }
 
 func NewAllocClient(target string, opts ...grpc.DialOption) (*Alloc, error) {
@@ -20,6 +21,7 @@ func NewAllocClient(target string, opts ...grpc.DialOption) (*Alloc, error) {
 	}
 	return &Alloc{
 		AllocClient: pb.NewAllocClient(conn),
+		cc:          conn,
 	}, nil
 }
 
@@ -43,4 +45,8 @@ func (c *Alloc) GetUserSeq(ctx context.Context, id uint32, tag string) (int64, e
 		return 0, err
 	}
 	return resp.Id, nil
+}
+
+func (c *Alloc) Close(ctx context.Context) error {
+	return c.cc.Close()
 }

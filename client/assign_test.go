@@ -24,6 +24,7 @@ func TestAssign_RegSection(t *testing.T) {
 		fmt.Println(err)
 		t.FailNow()
 	}
+	defer client.Close(context.Background())
 
 	err = client.RegSection(context.Background(), "tag", true)
 	if err != nil {
@@ -38,6 +39,7 @@ func TestAssign_UnRegSection(t *testing.T) {
 		fmt.Println(err)
 		t.FailNow()
 	}
+	defer client.Close(context.Background())
 
 	err = client.UnRegSection(context.Background(), "tag", true)
 	if err != nil {
@@ -52,6 +54,7 @@ func TestAssign_RegSection2(t *testing.T) {
 		fmt.Println(err)
 		t.FailNow()
 	}
+	defer client.Close(context.Background())
 
 	err = client.RegSection(context.Background(), "tag_0", false)
 	if err != nil {
@@ -66,6 +69,7 @@ func TestAssign_UnRegSection2(t *testing.T) {
 		fmt.Println(err)
 		t.FailNow()
 	}
+	defer client.Close(context.Background())
 
 	err = client.UnRegSection(context.Background(), "tag_0", false)
 	if err != nil {
@@ -80,6 +84,7 @@ func TestAssign_RegSection3(t *testing.T) {
 		fmt.Println(err)
 		t.FailNow()
 	}
+	defer client.Close(context.Background())
 
 	err = client.RegSection(context.Background(), "tag_1", false)
 	if err != nil {
@@ -94,6 +99,7 @@ func TestAssign_UnRegSection3(t *testing.T) {
 		fmt.Println(err)
 		t.FailNow()
 	}
+	defer client.Close(context.Background())
 
 	err = client.UnRegSection(context.Background(), "tag_1", false)
 	if err != nil {
@@ -108,6 +114,7 @@ func TestAssign_RegSection4(t *testing.T) {
 		fmt.Println(err)
 		t.FailNow()
 	}
+	defer client.Close(context.Background())
 
 	err = client.RegSection(context.Background(), "tag_2", false)
 	if err != nil {
@@ -122,6 +129,7 @@ func TestAssign_UnRegSection4(t *testing.T) {
 		fmt.Println(err)
 		t.FailNow()
 	}
+	defer client.Close(context.Background())
 
 	err = client.UnRegSection(context.Background(), "tag_2", false)
 	if err != nil {

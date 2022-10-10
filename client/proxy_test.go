@@ -25,6 +25,8 @@ func TestProxy_GenUserSeq(t *testing.T) {
 		fmt.Println(err)
 		t.FailNow()
 	}
+	defer client.Close(context.Background())
+
 	resp, err := client.GenUserSeq(context.Background(), 1234, "tag")
 	if err != nil {
 		fmt.Println(err)
@@ -39,6 +41,8 @@ func TestProxy_GenUserSeq2(t *testing.T) {
 		fmt.Println(err)
 		t.FailNow()
 	}
+	defer client.Close(context.Background())
+
 	for i := 0; i <= int(utils.MaxUserId); i++ {
 		seq, err := client.GenUserSeq(context.Background(), uint32(i), "tag")
 		if err != nil {
@@ -55,6 +59,8 @@ func TestProxy_GetUserSeq(t *testing.T) {
 		fmt.Println(err)
 		t.FailNow()
 	}
+	defer client.Close(context.Background())
+
 	resp, err := client.GetUserSeq(context.Background(), 1234, "tag")
 	if err != nil {
 		fmt.Println(err)
@@ -69,6 +75,8 @@ func TestProxy_GetUserSeq2(t *testing.T) {
 		fmt.Println(err)
 		t.FailNow()
 	}
+	defer client.Close(context.Background())
+
 	for i := 0; i <= int(utils.MaxUserId); i++ {
 		seq, err := client.GetUserSeq(context.Background(), uint32(i), "tag")
 		if err != nil {
@@ -85,6 +93,8 @@ func TestProxy_GenUserMultiSeq(t *testing.T) {
 		fmt.Println(err)
 		t.FailNow()
 	}
+	defer client.Close(context.Background())
+
 	resp, err := client.GenUserMultiSeq(context.Background(), 1234, []string{"tag_0", "tag_1", "tag_2"}, false)
 	if err != nil {
 		fmt.Println(err)
@@ -106,6 +116,8 @@ func TestProxy_GetUserMultiSeq(t *testing.T) {
 		fmt.Println(err)
 		t.FailNow()
 	}
+	defer client.Close(context.Background())
+
 	resp, err := client.GetUserMultiSeq(context.Background(), 1234, []string{"tag_0", "tag_1", "tag_2"})
 	if err != nil {
 		fmt.Println(err)
@@ -120,6 +132,8 @@ func TestProxy_BatchGenUserSeq(t *testing.T) {
 		fmt.Println(err)
 		t.FailNow()
 	}
+	defer client.Close(context.Background())
+
 	resp, err := client.BatchGenUserSeq(context.Background(), []uint32{1, 2, 3, 4}, "tag", false)
 	if err != nil {
 		fmt.Println(err)
@@ -141,6 +155,8 @@ func TestProxy_BatchGetUserSeq(t *testing.T) {
 		fmt.Println(err)
 		t.FailNow()
 	}
+	defer client.Close(context.Background())
+
 	resp, err := client.BatchGetUserSeq(context.Background(), []uint32{1, 2, 3, 4}, "tag")
 	if err != nil {
 		fmt.Println(err)
