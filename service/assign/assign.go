@@ -606,12 +606,6 @@ func parseAlloc(ctx context.Context, k, v []byte) (string, int64) {
 	return name, ts
 }
 
-func extractAlloc(ctx context.Context, k []byte) string {
-	key := string(k)
-	name := key[strings.LastIndex(key, "/")+1:]
-	return name
-}
-
 func parseSection(ctx context.Context, k, v []byte) (string, string, string) {
 	content := strings.Split(strings.Trim(string(k), "/"), "/")
 	if len(content) != utils.RegSectNum {
