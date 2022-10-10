@@ -55,5 +55,4 @@ table: for_dev/for_test/for_prod 区分环境
 
 ## TODO
 
-> - Reduce memory reduce of alloc server
-> - Fix memory leak of proxy server
+> - Reduce memory reduce of alloc server(feature/segment)
