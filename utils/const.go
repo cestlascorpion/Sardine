@@ -3,6 +3,7 @@ package utils
 import (
 	"errors"
 	"math"
+	"time"
 )
 
 var (
@@ -12,7 +13,6 @@ var (
 	ErrAllocExists      = errors.New("alloc exists")
 	ErrUnexpectedRules  = errors.New("unexpected rules")
 	ErrAllocNotReady    = errors.New("alloc not ready")
-	ErrAssignTxnFailed  = errors.New("assign txn failed")
 )
 
 const (
@@ -28,6 +28,8 @@ const (
 	defaultStoreType = TypeRedis
 	defaultPrefix    = "seq"
 	defaultAllocEnv  = "MY_POD_IP"
+	MaxRetryNum      = 3
+	RetryInterval    = time.Millisecond * 250
 )
 
 type StorageType int
