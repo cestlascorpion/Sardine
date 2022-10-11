@@ -59,3 +59,20 @@ func TestAssign_UnRegSection(t *testing.T) {
 		t.FailNow()
 	}
 }
+
+func TestAssign_ReBalance(t *testing.T) {
+	conf := utils.NewTestConfig()
+
+	assign, err := NewAssign(context.Background(), conf)
+	if err != nil {
+		fmt.Println(err)
+		t.FailNow()
+	}
+	defer assign.Close(context.Background())
+
+	err = assign.ReBalance(context.Background())
+	if err != nil {
+		fmt.Println(err)
+		t.FailNow()
+	}
+}

@@ -68,6 +68,18 @@ func (a *Server) UnRegSection(ctx context.Context, in *pb.UnRegSectionReq) (*pb.
 	return out, nil
 }
 
+func (a *Server) ReBalance(ctx context.Context, in *pb.ReBalanceReq) (*pb.ReBalanceResp, error) {
+	out := &pb.ReBalanceResp{}
+	log.Debugf("ReBalance in %+v", in)
+
+	err := a.impl.ReBalance(ctx)
+	if err != nil {
+		log.Errorf("impl ReBalance err %+v", err)
+		return out, err
+	}
+	return out, nil
+}
+
 func (a *Server) Close(ctx context.Context) error {
 	return a.impl.Close(ctx)
 }

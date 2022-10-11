@@ -5,10 +5,12 @@ package Sardine;
 option go_package = "github.com/cestlascorpion/Sardine;sardine";
 
 service assign {
-  // 注册业务tag 漫长的等待～
+  // 注册业务tag
   rpc RegSection(RegSectionReq) returns (RegSectionResp) {}
-  // 注册业务tag 漫长的等待～
+  // 注销业务tag
   rpc UnRegSection(UnRegSectionReq) returns (UnRegSectionResp) {}
+  // 手动reBalance
+  rpc ReBalance(ReBalanceReq) returns (ReBalanceResp) {}
 }
 
 service alloc {
@@ -19,19 +21,22 @@ service alloc {
 }
 
 service proxy {
-  // 生成单个id指定tag的Seq    单调递增但不保证连续性
+  // 生成单个id指定tag的Seq
   rpc GenUserSeq(GenUserSeqReq) returns (GenUserSeqResp) {}
-  // 获取单个id指定tag的Seq    小概率获取到比实际Seq大的Seq（服务重启，缓存失效）
+  // 获取单个id指定tag的Seq
+  // note: 小概率获取到比实际Seq大的Seq，也是下次调用Gen接口生成的Seq
   rpc GetUserSeq(GetUserSeqReq) returns (GetUserSeqResp) {}
 
-  // 生成单个id多个tag的Seq    单调递增但不保证连续性
+  // 生成单个id多个tag的Seq 部分失败时不返回错误
   rpc GenUserMultiSeq(GenUserMultiSeqReq) returns (GenUserMultiSeqResp) {}
-  // 获取单个id多个tag的Seq    小概率获取到比实际Seq大的Seq（服务重启，缓存失效）
+  // 获取单个id多个tag的Seq 部分失败时不返回错误
+  // note: 小概率获取到比实际Seq大的Seq，也是下次调用Gen接口生成的Seq
   rpc GetUserMultiSeq(GetUserMultiSeqReq) returns (GetUserMultiSeqResp) {}
 
-  // 生成多个id指定tag的Seq    单调递增但不保证连续性
+  // 生成多个id指定tag的Seq 部分失败时不返回错误
   rpc BatchGenUserSeq(BatchGenUserSeqReq) returns (BatchGenUserSeqResp) {}
-  // 获取多个id指定tag的Seq    小概率获取到比实际Seq大的Seq（服务重启，缓存失效）
+  // 获取多个id指定tag的Seq 部分失败时不返回错误
+  // note: 小概率获取到比实际Seq大的Seq，也是下次调用Gen接口生成的Seq
   rpc BatchGetUserSeq(BatchGetUserSeqReq) returns (BatchGetUserSeqResp) {}
 }
 
@@ -50,6 +55,14 @@ message UnRegSectionReq {
 }
 
 message UnRegSectionResp {
+  // nothing
+}
+
+message ReBalanceReq {
+  // nothing
+}
+
+message ReBalanceResp {
   // nothing
 }
 

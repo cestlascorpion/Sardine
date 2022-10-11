@@ -47,6 +47,14 @@ func (c *Assign) UnRegSection(ctx context.Context, tag string, async bool) error
 	return nil
 }
 
+func (c *Assign) ReBalance(ctx context.Context) error {
+	_, err := c.AssignClient.ReBalance(ctx, &pb.ReBalanceReq{})
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 func (c *Assign) Close(ctx context.Context) error {
 	return c.cc.Close()
 }

@@ -116,6 +116,53 @@ func (a *Assign) UnRegSection(ctx context.Context, tag string, async bool) error
 	return a.unRegSection(ctx, tag)
 }
 
+func (a *Assign) ReBalance(ctx context.Context) error {
+	prefix := fmt.Sprintf(routingPrefixFormat, a.table)
+	resp, err := a.client.Get(ctx, prefix, v3.WithPrefix())
+	if err != nil {
+		log.Errorf("etcd get prefix %s err %+v", prefix, err)
+		return err
+	}
+
+	snapshot := make(map[string]string)
+	sections := make([]string, 0)
+	for i := range resp.Kvs {
+		alloc, sect := extractRouting(ctx, resp.Kvs[i].Key)
+		if len(alloc) == 0 || len(sect) == 0 {
+			continue
+		}
+		snapshot[sect] = alloc
+		sections = append(sections, sect)
+	}
+
+	target, err := a.batchAssign(ctx, sections)
+	if err != nil {
+		log.Errorf("batch assign err %+v", err)
+		return err
+	}
+
+	reAssign := delta(ctx, target, snapshot)
+	log.Infof("------ start re-balance ------")
+	for sect, change := range reAssign {
+		ruleKey := fmt.Sprintf("%s/%s/%s", fmt.Sprintf(routingPrefixFormat, a.table), change[0], sect)
+		resp, err := a.client.Txn(ctx).
+			If(v3.Compare(v3.Value(ruleKey), "=", "running")).
+			Then(v3.OpDelete(ruleKey)).
+			Commit()
+		if err != nil {
+			log.Errorf("etcd txn delete rule key %s err %+v", ruleKey, err)
+			a.msgBot.SendMsg(ctx, "[ETCD BUG] assign %s: etcd txn delete rule key %s err %+v", a.name, ruleKey, err)
+			return err
+		}
+
+		if resp.Succeeded {
+			log.Infof("rebalance for sect %s %v", sect, change)
+		}
+	}
+	log.Infof("------ end re-balance ------")
+	return nil
+}
+
 func (a *Assign) Close(ctx context.Context) error {
 	a.cronjob.Stop()
 
@@ -604,12 +651,6 @@ func parseAlloc(ctx context.Context, k, v []byte) (string, int64) {
 	}
 
 	return name, ts
-}
-
-func extractAlloc(ctx context.Context, k []byte) string {
-	key := string(k)
-	name := key[strings.LastIndex(key, "/")+1:]
-	return name
 }
 
 func parseSection(ctx context.Context, k, v []byte) (string, string, string) {

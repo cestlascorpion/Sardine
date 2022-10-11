@@ -137,3 +137,18 @@ func TestAssign_UnRegSection4(t *testing.T) {
 		t.FailNow()
 	}
 }
+
+func TestAssign_ReBalance(t *testing.T) {
+	client, err := NewAssignClient(testAssignTarget, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		fmt.Println(err)
+		t.FailNow()
+	}
+	defer client.Close(context.Background())
+
+	err = client.ReBalance(context.Background())
+	if err != nil {
+		fmt.Println(err)
+		t.FailNow()
+	}
+}

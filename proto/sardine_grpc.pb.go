@@ -22,10 +22,12 @@ const _ = grpc.SupportPackageIsVersion7
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type AssignClient interface {
-	// 注册业务tag 漫长的等待～
+	// 注册业务tag
 	RegSection(ctx context.Context, in *RegSectionReq, opts ...grpc.CallOption) (*RegSectionResp, error)
-	// 注册业务tag 漫长的等待～
+	// 注销业务tag
 	UnRegSection(ctx context.Context, in *UnRegSectionReq, opts ...grpc.CallOption) (*UnRegSectionResp, error)
+	// 手动reBalance
+	ReBalance(ctx context.Context, in *ReBalanceReq, opts ...grpc.CallOption) (*ReBalanceResp, error)
 }
 
 type assignClient struct {
@@ -54,14 +56,25 @@ func (c *assignClient) UnRegSection(ctx context.Context, in *UnRegSectionReq, op
 	return out, nil
 }
 
+func (c *assignClient) ReBalance(ctx context.Context, in *ReBalanceReq, opts ...grpc.CallOption) (*ReBalanceResp, error) {
+	out := new(ReBalanceResp)
+	err := c.cc.Invoke(ctx, "/Sardine.assign/ReBalance", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AssignServer is the server API for Assign service.
 // All implementations must embed UnimplementedAssignServer
 // for forward compatibility
 type AssignServer interface {
-	// 注册业务tag 漫长的等待～
+	// 注册业务tag
 	RegSection(context.Context, *RegSectionReq) (*RegSectionResp, error)
-	// 注册业务tag 漫长的等待～
+	// 注销业务tag
 	UnRegSection(context.Context, *UnRegSectionReq) (*UnRegSectionResp, error)
+	// 手动reBalance
+	ReBalance(context.Context, *ReBalanceReq) (*ReBalanceResp, error)
 	mustEmbedUnimplementedAssignServer()
 }
 
@@ -74,6 +87,9 @@ func (UnimplementedAssignServer) RegSection(context.Context, *RegSectionReq) (*R
 }
 func (UnimplementedAssignServer) UnRegSection(context.Context, *UnRegSectionReq) (*UnRegSectionResp, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method UnRegSection not implemented")
+}
+func (UnimplementedAssignServer) ReBalance(context.Context, *ReBalanceReq) (*ReBalanceResp, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ReBalance not implemented")
 }
 func (UnimplementedAssignServer) mustEmbedUnimplementedAssignServer() {}
 
@@ -124,6 +140,24 @@ func _Assign_UnRegSection_Handler(srv interface{}, ctx context.Context, dec func
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Assign_ReBalance_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReBalanceReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AssignServer).ReBalance(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/Sardine.assign/ReBalance",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AssignServer).ReBalance(ctx, req.(*ReBalanceReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Assign_ServiceDesc is the grpc.ServiceDesc for Assign service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -138,6 +172,10 @@ var Assign_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "UnRegSection",
 			Handler:    _Assign_UnRegSection_Handler,
+		},
+		{
+			MethodName: "ReBalance",
+			Handler:    _Assign_ReBalance_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
@@ -274,17 +312,20 @@ var Alloc_ServiceDesc = grpc.ServiceDesc{
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type ProxyClient interface {
-	// 生成单个id指定tag的Seq    单调递增但不保证连续性
+	// 生成单个id指定tag的Seq
 	GenUserSeq(ctx context.Context, in *GenUserSeqReq, opts ...grpc.CallOption) (*GenUserSeqResp, error)
-	// 获取单个id指定tag的Seq    小概率获取到比实际Seq大的Seq（服务重启，缓存失效）
+	// 获取单个id指定tag的Seq
+	// note: 小概率获取到比实际Seq大的Seq，也是下次调用Gen接口生成的Seq
 	GetUserSeq(ctx context.Context, in *GetUserSeqReq, opts ...grpc.CallOption) (*GetUserSeqResp, error)
-	// 生成单个id多个tag的Seq    单调递增但不保证连续性
+	// 生成单个id多个tag的Seq 部分失败时不返回错误
 	GenUserMultiSeq(ctx context.Context, in *GenUserMultiSeqReq, opts ...grpc.CallOption) (*GenUserMultiSeqResp, error)
-	// 获取单个id多个tag的Seq    小概率获取到比实际Seq大的Seq（服务重启，缓存失效）
+	// 获取单个id多个tag的Seq 部分失败时不返回错误
+	// note: 小概率获取到比实际Seq大的Seq，也是下次调用Gen接口生成的Seq
 	GetUserMultiSeq(ctx context.Context, in *GetUserMultiSeqReq, opts ...grpc.CallOption) (*GetUserMultiSeqResp, error)
-	// 生成多个id指定tag的Seq    单调递增但不保证连续性
+	// 生成多个id指定tag的Seq 部分失败时不返回错误
 	BatchGenUserSeq(ctx context.Context, in *BatchGenUserSeqReq, opts ...grpc.CallOption) (*BatchGenUserSeqResp, error)
-	// 获取多个id指定tag的Seq    小概率获取到比实际Seq大的Seq（服务重启，缓存失效）
+	// 获取多个id指定tag的Seq 部分失败时不返回错误
+	// note: 小概率获取到比实际Seq大的Seq，也是下次调用Gen接口生成的Seq
 	BatchGetUserSeq(ctx context.Context, in *BatchGetUserSeqReq, opts ...grpc.CallOption) (*BatchGetUserSeqResp, error)
 }
 
@@ -354,17 +395,20 @@ func (c *proxyClient) BatchGetUserSeq(ctx context.Context, in *BatchGetUserSeqRe
 // All implementations must embed UnimplementedProxyServer
 // for forward compatibility
 type ProxyServer interface {
-	// 生成单个id指定tag的Seq    单调递增但不保证连续性
+	// 生成单个id指定tag的Seq
 	GenUserSeq(context.Context, *GenUserSeqReq) (*GenUserSeqResp, error)
-	// 获取单个id指定tag的Seq    小概率获取到比实际Seq大的Seq（服务重启，缓存失效）
+	// 获取单个id指定tag的Seq
+	// note: 小概率获取到比实际Seq大的Seq，也是下次调用Gen接口生成的Seq
 	GetUserSeq(context.Context, *GetUserSeqReq) (*GetUserSeqResp, error)
-	// 生成单个id多个tag的Seq    单调递增但不保证连续性
+	// 生成单个id多个tag的Seq 部分失败时不返回错误
 	GenUserMultiSeq(context.Context, *GenUserMultiSeqReq) (*GenUserMultiSeqResp, error)
-	// 获取单个id多个tag的Seq    小概率获取到比实际Seq大的Seq（服务重启，缓存失效）
+	// 获取单个id多个tag的Seq 部分失败时不返回错误
+	// note: 小概率获取到比实际Seq大的Seq，也是下次调用Gen接口生成的Seq
 	GetUserMultiSeq(context.Context, *GetUserMultiSeqReq) (*GetUserMultiSeqResp, error)
-	// 生成多个id指定tag的Seq    单调递增但不保证连续性
+	// 生成多个id指定tag的Seq 部分失败时不返回错误
 	BatchGenUserSeq(context.Context, *BatchGenUserSeqReq) (*BatchGenUserSeqResp, error)
-	// 获取多个id指定tag的Seq    小概率获取到比实际Seq大的Seq（服务重启，缓存失效）
+	// 获取多个id指定tag的Seq 部分失败时不返回错误
+	// note: 小概率获取到比实际Seq大的Seq，也是下次调用Gen接口生成的Seq
 	BatchGetUserSeq(context.Context, *BatchGetUserSeqReq) (*BatchGetUserSeqResp, error)
 	mustEmbedUnimplementedProxyServer()
 }
